@@ -57,11 +57,11 @@ jobs:
           # SIGPIPE from `yes` when sdkmanager stops reading is expected.
           yes | "$CMDLINE_TOOLS/bin/sdkmanager" --sdk_root="$SDK_ROOT" --licenses > /dev/null || true
           "$CMDLINE_TOOLS/bin/sdkmanager" --sdk_root="$SDK_ROOT" --install \
-            "platforms:${SDK_PLATFORM}" \
-            "build-tools:${SDK_BUILD_TOOLS}" \
+            "platforms;${SDK_PLATFORM}" \
+            "build-tools;${SDK_BUILD_TOOLS}" \
             "platform-tools" \
-            "ndk:${SDK_NDK}" \
-            "cmake:${SDK_CMAKE}"
+            "ndk;${SDK_NDK}" \
+            "cmake;${SDK_CMAKE}"
           {
             echo "ANDROID_SDK_ROOT=$SDK_ROOT"
             echo "ANDROID_HOME=$SDK_ROOT"
