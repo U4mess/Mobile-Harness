@@ -42,6 +42,13 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -177,6 +184,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -227,6 +235,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 
+import com.jarves.mh.ui.theme.PocketSizeTokens
+import com.jarves.mh.ui.theme.PocketSpacingTokens
+import com.jarves.mh.ui.theme.PocketTheme
 import com.jarves.mh.ui.theme.AppThemeMode
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Terminal
@@ -3118,7 +3129,7 @@ private fun ClaudeSubscriptionCredentialsStep(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun ProjectsScreen(
     state: AppUiState,
@@ -3171,163 +3182,45 @@ private fun ProjectsScreen(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(PocketTheme.spacing.space16),
+            verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space12),
         ) {
+            // 1. Compact introduction. Heading semantics let a screen reader jump straight here.
             item {
-                Text("Build from your phone", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text("Chat, review changes, and preview your project.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Button(
-                        onClick = onCreateQuickProject,
-                        modifier = Modifier.weight(1f).height(48.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Chat,
-                            contentDescription = null,
-                            modifier = Modifier.size(17.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = "Quick project",
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp,
-                            maxLines = 1,
-                            softWrap = false,
-                        )
-                    }
-                    OutlinedButton(
-                        onClick = { showCreate = true },
-                        modifier = Modifier.weight(1f).height(48.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = "New project",
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp,
-                            maxLines = 1,
-                            softWrap = false,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                val isImportExpanded = importExpanded || state.projectImporting || state.gitCloneRunning
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
-                ) {
-                    Column {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { importExpanded = !importExpanded }
-                                .padding(horizontal = 14.dp, vertical = 13.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text("Bring an existing project", fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                                Text(
-                                    if (isImportExpanded) "Import files or clone complete Git history" else "ZIP file, Git repository, or GitHub",
-                                    fontSize = 10.5.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Icon(
-                                imageVector = if (isImportExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                contentDescription = if (isImportExpanded) "Collapse" else "Expand",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                        AnimatedVisibility(visible = isImportExpanded) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                                    ImportSourceButton(
-                                        icon = Icons.Default.Download,
-                                        title = if (state.projectImporting) "Importing…" else "ZIP file",
-                                        enabled = !state.projectImporting && !state.gitCloneRunning,
-                                        modifier = Modifier.weight(1f),
-                                        onClick = { importZipLauncher.launch("*/*") },
-                                        loading = state.projectImporting,
-                                    )
-                                    ImportSourceButton(
-                                        icon = Icons.Default.Code,
-                                        title = if (state.gitCloneRunning) "Cloning…" else "Git URL",
-                                        enabled = !state.projectImporting && !state.gitCloneRunning,
-                                        modifier = Modifier.weight(1f),
-                                        onClick = { showGitDialog = true },
-                                        loading = state.gitCloneRunning,
-                                    )
-                                }
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth().clickable(enabled = !state.gitCloneRunning) {
-                                        showGitHubDialog = true
-                                        if (state.githubAuthStatus == GitHubAuthStatus.CONNECTED && state.githubRepositories.isEmpty()) onRefreshGitHub()
-                                    },
-                                    color = MaterialTheme.colorScheme.surface,
-                                    shape = RoundedCornerShape(13.dp),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                                ) {
-                                    Row(Modifier.padding(horizontal = 12.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Code, null, tint = PocketOrange, modifier = Modifier.size(19.dp))
-                                        Spacer(Modifier.width(10.dp))
-                                        Column(Modifier.weight(1f)) {
-                                            Text(
-                                                state.githubLogin?.let { "GitHub · @$it" } ?: "Connect GitHub",
-                                                fontSize = 12.5.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                            )
-                                            Text(
-                                                if (state.githubLogin != null) "Browse public and private repositories" else "Sign in to access your repositories",
-                                                fontSize = 10.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                        }
-                                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                                (state.projectImportMessage ?: state.gitCloneMessage)?.let { message ->
-                                    Text(message, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.primary)
-                                }
-                            }
-                        }
-                    }
-                }
+                Text(
+                    "Projects",
+                    style = PocketTheme.typography.screenTitle,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.semantics { heading() },
+                )
+                Spacer(Modifier.height(PocketTheme.spacing.space4))
+                Text(
+                    "Open a project to chat, review changes, and preview.",
+                    style = PocketTheme.typography.supporting,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
+            // 2. Conditional update banner, after the introduction and before the list.
             state.appUpdate?.let { update ->
                 item {
                     Surface(
-                        modifier = Modifier.fillMaxWidth().clickable { showUpdateDialog = true },
-                        shape = RoundedCornerShape(20.dp),
-                        color = PocketOrange.copy(alpha = 0.11f),
-                        border = BorderStroke(1.dp, PocketOrange.copy(alpha = 0.45f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showUpdateDialog = true },
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
                     ) {
-                        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Surface(shape = CircleShape, color = PocketOrange.copy(alpha = 0.18f), modifier = Modifier.size(46.dp)) {
-                                Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.Download, null, tint = PocketOrange) }
-                            }
-                            Spacer(Modifier.width(12.dp))
+                        Row(
+                            Modifier.padding(PocketTheme.spacing.space16),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Default.Download,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                            Spacer(Modifier.width(PocketTheme.spacing.space12))
                             Column(Modifier.weight(1f)) {
                                 Text(
                                     stringResource(
@@ -3335,59 +3228,65 @@ private fun ProjectsScreen(
                                         stringResource(R.string.app_name),
                                         update.versionName,
                                     ),
-                                    fontWeight = FontWeight.Bold,
+                                    style = PocketTheme.typography.rowTitle,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 )
-                                Text("A new update is ready", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    "A new update is ready",
+                                    style = PocketTheme.typography.metadata,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                )
                             }
-                            Text("Update", color = PocketOrange, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Spacer(Modifier.width(PocketTheme.spacing.space8))
+                            Text(
+                                "Update",
+                                style = PocketTheme.typography.buttonLabel,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
                         }
                     }
                 }
             }
-            item { Text("Your projects", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+            // 3. The projects themselves come before any creation or import control.
+            item {
+                Text(
+                    "Your projects",
+                    style = PocketTheme.typography.sectionTitle,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.semantics { heading() },
+                )
+            }
             if (projects.isEmpty()) {
                 item {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 10.dp),
-                        shape = RoundedCornerShape(18.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(28.dp),
+                                .padding(PocketTheme.spacing.space20),
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space8),
                         ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = PocketOrange.copy(alpha = 0.15f),
-                                modifier = Modifier.size(56.dp),
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        Icons.Default.Folder,
-                                        contentDescription = null,
-                                        tint = PocketOrange,
-                                        modifier = Modifier.size(28.dp),
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.height(4.dp))
+                            Icon(
+                                Icons.Default.Folder,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
                             Text(
                                 "No projects yet",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
+                                style = PocketTheme.typography.rowTitle,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 textAlign = TextAlign.Center,
                             )
                             Text(
-                                "Create a named project or start instantly with a Quick Project.",
-                                style = MaterialTheme.typography.bodyMedium,
+                                "Create a named project or start instantly with a Quick project.",
+                                style = PocketTheme.typography.supporting,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center,
-                                lineHeight = 20.sp,
                             )
                         }
                     }
@@ -3404,19 +3303,158 @@ private fun ProjectsScreen(
                     )
                 }
             }
+            // 4. The single prominent primary action.
+            item {
+                Button(
+                    onClick = { showCreate = true },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = PocketTheme.sizes.standardControlHeight),
+                    shape = MaterialTheme.shapes.small,
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(PocketTheme.spacing.space8))
+                    Text("New project", style = PocketTheme.typography.buttonLabel)
+                }
+            }
+            // 5. Every other way to start, grouped and collapsed by default.
+            item {
+                val isCreationExpanded = importExpanded || state.projectImporting || state.gitCloneRunning
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { importExpanded = !importExpanded }
+                                .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget)
+                                .semantics {
+                                    stateDescription = if (isCreationExpanded) "Expanded" else "Collapsed"
+                                }
+                                .padding(horizontal = PocketTheme.spacing.space16, vertical = PocketTheme.spacing.space12),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Start or import",
+                                    style = PocketTheme.typography.rowTitle,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.semantics { heading() },
+                                )
+                                Text(
+                                    "Quick project, ZIP, Git, or GitHub",
+                                    style = PocketTheme.typography.supporting,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Spacer(Modifier.width(PocketTheme.spacing.space8))
+                            Icon(
+                                imageVector = if (isCreationExpanded) {
+                                    Icons.Default.KeyboardArrowUp
+                                } else {
+                                    Icons.Default.KeyboardArrowDown
+                                },
+                                contentDescription = if (isCreationExpanded) "Collapse" else "Expand",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        AnimatedVisibility(visible = isCreationExpanded) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(
+                                        start = PocketTheme.spacing.space16,
+                                        end = PocketTheme.spacing.space16,
+                                        bottom = PocketTheme.spacing.space16,
+                                    ),
+                                verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space8),
+                            ) {
+                                CreationActionRow(
+                                    icon = Icons.Default.Chat,
+                                    title = "Quick project",
+                                    subtitle = "Start immediately, name it later",
+                                    enabled = !state.projectImporting && !state.gitCloneRunning,
+                                    onClick = onCreateQuickProject,
+                                    loading = false,
+                                )
+                                CreationActionRow(
+                                    icon = Icons.Default.Download,
+                                    title = if (state.projectImporting) "Importing…" else "Import ZIP",
+                                    subtitle = "Restore a project from an archive",
+                                    enabled = !state.projectImporting && !state.gitCloneRunning,
+                                    onClick = { importZipLauncher.launch("*/*") },
+                                    loading = state.projectImporting,
+                                )
+                                CreationActionRow(
+                                    icon = Icons.Default.Code,
+                                    title = if (state.gitCloneRunning) "Cloning…" else "Clone Git URL",
+                                    subtitle = "Fetch a full repository history",
+                                    enabled = !state.projectImporting && !state.gitCloneRunning,
+                                    onClick = { showGitDialog = true },
+                                    loading = state.gitCloneRunning,
+                                )
+                                CreationActionRow(
+                                    icon = Icons.Default.AccountCircle,
+                                    title = state.githubLogin?.let { "GitHub · @$it" } ?: "Connect GitHub",
+                                    subtitle = if (state.githubLogin != null) {
+                                        "Browse public and private repositories"
+                                    } else {
+                                        "Sign in to access your repositories"
+                                    },
+                                    enabled = !state.projectImporting && !state.gitCloneRunning,
+                                    onClick = {
+                                        showGitHubDialog = true
+                                        if (
+                                            state.githubAuthStatus == GitHubAuthStatus.CONNECTED &&
+                                            state.githubRepositories.isEmpty()
+                                        ) {
+                                            onRefreshGitHub()
+                                        }
+                                    },
+                                    loading = false,
+                                )
+                                (state.projectImportMessage ?: state.gitCloneMessage)?.let { message ->
+                                    Text(
+                                        message,
+                                        style = PocketTheme.typography.metadata,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // 6. Clearance so the global Terminal FAB never covers the last card or its
+            // overflow button: FAB visual height + FAB spacing + list spacing.
+            item {
+                Spacer(
+                    Modifier.height(
+                        ProjectsPresentation.terminalFabClearance(
+                            fabHeight = PocketSizeTokens.comfortableControlHeight,
+                            above = PocketSpacingTokens.space16,
+                            below = PocketSpacingTokens.space16,
+                        ),
+                    ),
+                )
+            }
         }
     }
     if (showCreate) AlertDialog(
         onDismissRequest = { showCreate = false },
         title = { Text("Create a starter project") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space8)) {
                 OutlinedTextField(name, { name = it }, label = { Text("Project name") }, singleLine = true)
                 if (name.isNotBlank()) {
                     Text(
                         "Terminal folder: /workspace/${projectSlug(name)}",
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
+                        style = PocketTheme.typography.metadata,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -3427,11 +3465,11 @@ private fun ProjectsScreen(
     )
     if (showGitDialog) AlertDialog(
         onDismissRequest = { if (!state.gitCloneRunning) showGitDialog = false },
-        icon = { Icon(Icons.Default.Code, null, tint = PocketOrange) },
+        icon = { Icon(Icons.Default.Code, null, tint = MaterialTheme.colorScheme.primary) },
         title = { Text("Clone Git repository") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Paste a public HTTPS repository URL. Its complete Git history and current branch will be kept.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.5.sp)
+            Column(verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space8)) {
+                Text("Paste a public HTTPS repository URL. Its complete Git history and current branch will be kept.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = PocketTheme.typography.supporting)
                 OutlinedTextField(
                     value = gitUrl,
                     onValueChange = { gitUrl = it },
@@ -3439,7 +3477,7 @@ private fun ProjectsScreen(
                     placeholder = { Text("https://github.com/owner/repository.git") },
                     singleLine = true,
                 )
-                state.gitCloneMessage?.let { Text(it, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp) }
+                state.gitCloneMessage?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = PocketTheme.typography.supporting) }
             }
         },
         confirmButton = {
@@ -3457,53 +3495,52 @@ private fun ProjectsScreen(
         }
         AlertDialog(
             onDismissRequest = { if (!state.gitCloneRunning) showGitHubDialog = false },
-            icon = { Icon(Icons.Default.Code, null, tint = PocketOrange) },
+            icon = { Icon(Icons.Default.Code, null, tint = MaterialTheme.colorScheme.primary) },
             title = { Text(state.githubLogin?.let { "GitHub · @$it" } ?: "Connect GitHub") },
             text = {
                 when (state.githubAuthStatus) {
-                    GitHubAuthStatus.DISCONNECTED, GitHubAuthStatus.ERROR -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    GitHubAuthStatus.DISCONNECTED, GitHubAuthStatus.ERROR -> Column(verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space12)) {
                         Text(
                             state.githubMessage ?: "Sign in with GitHub's official CLI to browse public and private repositories.",
                             color = if (state.githubAuthStatus == GitHubAuthStatus.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 13.sp,
+                            style = PocketTheme.typography.supporting,
                         )
                         Button(onClick = onStartGitHubLogin, modifier = Modifier.fillMaxWidth()) { Text("Sign in with GitHub") }
                     }
                     GitHubAuthStatus.STARTING -> Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                         CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.5.dp)
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(PocketTheme.spacing.space12))
                         Text(state.githubMessage ?: "Starting GitHub sign-in…")
                     }
-                    GitHubAuthStatus.AWAITING_USER -> Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Enter this one-time code in the GitHub page opened in your browser.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    GitHubAuthStatus.AWAITING_USER -> Column(verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space12), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Enter this one-time code in the GitHub page opened in your browser.", style = PocketTheme.typography.supporting, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Surface(
                             modifier = Modifier.fillMaxWidth().clickable { state.githubUserCode?.let { clipboard.setText(AnnotatedString(it)) } },
-                            shape = RoundedCornerShape(14.dp),
+                            shape = MaterialTheme.shapes.small,
                             color = MaterialTheme.colorScheme.primaryContainer,
                         ) {
                             Text(
                                 state.githubUserCode.orEmpty(),
-                                modifier = Modifier.padding(16.dp),
+                                modifier = Modifier.padding(PocketTheme.spacing.space16),
                                 textAlign = TextAlign.Center,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 22.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                style = PocketTheme.typography.code,
                                 letterSpacing = 2.sp,
                             )
                         }
-                        Text("Tap the code to copy it. PocketDev will connect automatically after approval.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Tap the code to copy it. PocketForge will connect automatically after approval.", style = PocketTheme.typography.metadata, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedButton(
                             onClick = onGenerateNewGitHubCode,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
+                            Spacer(Modifier.width(PocketTheme.spacing.space8))
                             Text("Generate new code")
                         }
                     }
-                    GitHubAuthStatus.CONNECTED -> Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    GitHubAuthStatus.CONNECTED -> Column(verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space8)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(state.githubMessage ?: "Select a repository", modifier = Modifier.weight(1f), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(state.githubMessage ?: "Select a repository", modifier = Modifier.weight(1f), style = PocketTheme.typography.supporting, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             IconButton(onClick = onRefreshGitHub, enabled = !state.githubRepositoriesLoading) {
                                 Icon(Icons.Default.Refresh, "Refresh repositories")
                             }
@@ -3517,22 +3554,22 @@ private fun ProjectsScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
                         if (state.githubRepositoriesLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 350.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 350.dp), verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space8)) {
                             items(filteredRepositories, key = { it.fullName }) { repository ->
                                 Surface(
                                     modifier = Modifier.fillMaxWidth().clickable(enabled = !state.gitCloneRunning) {
                                         showGitHubDialog = false
                                         onCloneGitHub(repository)
                                     },
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                                    shape = MaterialTheme.shapes.small,
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
                                 ) {
-                                    Row(Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(if (repository.private) Icons.Default.Key else Icons.Default.Code, null, modifier = Modifier.size(17.dp), tint = PocketOrange)
-                                        Spacer(Modifier.width(9.dp))
+                                    Row(Modifier.padding(PocketTheme.spacing.space12), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(if (repository.private) Icons.Default.Key else Icons.Default.Code, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                                        Spacer(Modifier.width(PocketTheme.spacing.space8))
                                         Column(Modifier.weight(1f)) {
-                                            Text(repository.fullName, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text("${if (repository.private) "Private" else "Public"} · ${repository.defaultBranch}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(repository.fullName, style = PocketTheme.typography.rowTitle, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text("${if (repository.private) "Private" else "Public"} · ${repository.defaultBranch}", style = PocketTheme.typography.metadata, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
                                 }
@@ -3567,23 +3604,23 @@ private fun ProjectsScreen(
         val fallbackNotes = stringResource(R.string.update_notes_fallback, stringResource(R.string.app_name))
         AlertDialog(
             onDismissRequest = { if (!installing) showUpdateDialog = false },
-            icon = { Icon(Icons.Default.Download, null, tint = PocketOrange, modifier = Modifier.size(34.dp)) },
+            icon = { Icon(Icons.Default.Download, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(34.dp)) },
             title = { Text("Update to ${update.versionName}", fontWeight = FontWeight.Bold) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space12)) {
                     Text(update.notes.ifBlank { fallbackNotes })
-                    if (update.sizeBytes > 0) Text("Download size: ${formatMegabytes(update.sizeBytes)}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    if (update.sizeBytes > 0) Text("Download size: ${formatMegabytes(update.sizeBytes)}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = PocketTheme.typography.supporting)
                     if (!canInstall) {
-                        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.65f)) {
-                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
+                        Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.errorContainer) {
+                            Row(Modifier.padding(PocketTheme.spacing.space12), verticalAlignment = Alignment.Top) {
                                 Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
-                                Spacer(Modifier.width(8.dp))
+                                Spacer(Modifier.width(PocketTheme.spacing.space8))
                                 Text(
                                     stringResource(
                                         R.string.update_unknown_sources_hint,
                                         stringResource(R.string.app_name),
                                     ),
-                                    fontSize = 13.sp,
+                                    style = PocketTheme.typography.supporting,
                                 )
                             }
                         }
@@ -3593,12 +3630,12 @@ private fun ProjectsScreen(
                         else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         Text(
                             if (total > 0) "Downloading ${formatMegabytes(downloaded)} / ${formatMegabytes(total)} · ${(progress * 100).toInt()}%" else "Downloading ${formatMegabytes(downloaded)}",
-                            fontSize = 12.sp,
+                            style = PocketTheme.typography.metadata,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    if (installing) Text("Download verified. Opening Android installer…", color = PocketGreen, fontSize = 13.sp)
-                    state.appUpdateError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
+                    if (installing) Text("Download verified. Opening Android installer…", color = PocketTheme.colors.success, style = PocketTheme.typography.supporting)
+                    state.appUpdateError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = PocketTheme.typography.supporting) }
                 }
             },
             confirmButton = {
@@ -3622,26 +3659,128 @@ private fun ProjectsScreen(
     }
 }
 
+/**
+ * Projects-screen presentation policy, kept free of Compose so the rules can be
+ * asserted directly instead of being restated in a test. `internal` rather than
+ * `private` only so the unit test can call the same functions production uses.
+ */
+internal object ProjectsPresentation {
+    /** Fixed precedence: a live task outranks a live terminal; otherwise no indicator. */
+    fun runningLabel(taskRunning: Boolean, terminalRunning: Boolean): String? = when {
+        taskRunning -> "Task running"
+        terminalRunning -> "Terminal running"
+        else -> null
+    }
+
+    const val NAME_MAX_LINES = 2
+    const val DESCRIPTION_MAX_LINES = 2
+
+    fun cardDescription(isQuickProject: Boolean, description: String): String =
+        if (isQuickProject) "Quick project" else description
+
+    /**
+     * Bottom content clearance so the global Terminal FAB can never cover the last
+     * project card or its overflow button: the FAB's visual height, plus spacing
+     * above it, plus list spacing below. Projects-specific, so it is derived here
+     * from existing tokens rather than added to the global size tokens.
+     *
+     * Takes the metrics as parameters (rather than reading `PocketTheme`, whose
+     * accessors are `@Composable`) so the same formula is callable from the unit test.
+     */
+    fun terminalFabClearance(fabHeight: Dp, above: Dp, below: Dp): Dp = fabHeight + above + below
+}
+
 @Composable
-private fun ImportSourceButton(
+private fun RunningStateChip(label: String) {
+    // Status is carried by visible text as well as colour, so it never depends on hue alone.
+    Surface(
+        shape = MaterialTheme.shapes.extraSmall,
+        color = PocketTheme.colors.successContainer,
+    ) {
+        Row(
+            modifier = Modifier.padding(
+                horizontal = PocketTheme.spacing.space8,
+                vertical = PocketTheme.spacing.space4,
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(12.dp),
+                strokeWidth = 2.dp,
+                color = PocketTheme.colors.onSuccessContainer,
+            )
+            Spacer(Modifier.width(PocketTheme.spacing.space4))
+            Text(
+                label,
+                style = PocketTheme.typography.metadata,
+                color = PocketTheme.colors.onSuccessContainer,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CreationActionRow(
     icon: ImageVector,
     title: String,
+    subtitle: String,
     enabled: Boolean,
     loading: Boolean,
-    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    OutlinedButton(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier.height(46.dp),
-        shape = RoundedCornerShape(12.dp),
-        contentPadding = PaddingValues(horizontal = 10.dp),
+    // A full-width row rather than a fixed-height button: the label and supporting text
+    // wrap at large font scales, and the 48dp floor is a minimum, not a fixed height.
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, onClick = onClick)
+            .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget),
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        if (loading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-        else Icon(icon, null, Modifier.size(17.dp))
-        Spacer(Modifier.width(7.dp))
-        Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = PocketTheme.spacing.space12,
+                    vertical = PocketTheme.spacing.space12,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (loading) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Spacer(Modifier.width(PocketTheme.spacing.space12))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = PocketTheme.typography.rowTitle,
+                    color = if (enabled) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+                Text(
+                    subtitle,
+                    style = PocketTheme.typography.supporting,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(PocketTheme.spacing.space8))
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -3711,6 +3850,7 @@ private fun ApiStatusChip(state: AppUiState, onSettings: () -> Unit, onPing: () 
 
 
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProjectCard(
     project: Project,
@@ -3724,44 +3864,91 @@ private fun ProjectCard(
     var showRename by rememberSaveable(project.id) { mutableStateOf(false) }
     var showDelete by rememberSaveable(project.id) { mutableStateOf(false) }
     var renameText by rememberSaveable(project.id) { mutableStateOf(project.name) }
-    Card(Modifier.fillMaxWidth().clickable(onClick = onOpen), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Row(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                Icon(Icons.Default.Folder, null, Modifier.padding(13.dp), tint = PocketOrange)
+    Card(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Row(
+            Modifier.padding(
+                start = PocketTheme.spacing.space16,
+                top = PocketTheme.spacing.space12,
+                bottom = PocketTheme.spacing.space12,
+                end = PocketTheme.spacing.space4,
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceVariant) {
+                Icon(
+                    Icons.Default.Folder,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(PocketTheme.spacing.space12),
+                )
             }
-            Spacer(Modifier.width(13.dp))
+            Spacer(Modifier.width(PocketTheme.spacing.space12))
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    project.name,
+                    style = PocketTheme.typography.rowTitle,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = ProjectsPresentation.NAME_MAX_LINES,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val runningLabel = ProjectsPresentation.runningLabel(taskRunning, terminalRunning)
+                if (runningLabel != null) {
+                    Spacer(Modifier.height(PocketTheme.spacing.space4))
+                    RunningStateChip(runningLabel)
+                }
+                Spacer(Modifier.height(PocketTheme.spacing.space4))
+                Text(
+                    ProjectsPresentation.cardDescription(
+                        isQuickProject = project.kind == ProjectKind.QUICK_PROJECT,
+                        description = project.description,
+                    ),
+                    style = PocketTheme.typography.supporting,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = ProjectsPresentation.DESCRIPTION_MAX_LINES,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(PocketTheme.spacing.space4))
+                // Flexible metadata row: wraps instead of clipping at large font scales.
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space8),
+                    verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space4),
+                ) {
                     Text(
-                        project.name,
-                        modifier = Modifier.weight(1f, fill = false),
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        project.language,
+                        style = PocketTheme.typography.metadata,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (taskRunning || terminalRunning) {
-                        Spacer(Modifier.width(8.dp))
-                        CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(5.dp))
+                    Text(
+                        project.formattedUpdatedAt,
+                        style = PocketTheme.typography.metadata,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (project.kind == ProjectKind.QUICK_PROJECT) {
                         Text(
-                            if (taskRunning) "Task running" else "Terminal running",
+                            "Quick",
+                            style = PocketTheme.typography.metadata,
                             color = MaterialTheme.colorScheme.primary,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold,
                         )
                     }
                 }
-                Text(
-                    if (project.kind == ProjectKind.QUICK_PROJECT) "Quick project" else project.description,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                )
-                Text("/workspace/${project.slug}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-                Text("${project.language} · ${project.formattedUpdatedAt}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
             }
             Box {
-                IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, "Project options") }
+                IconButton(
+                    onClick = { menuOpen = true },
+                    modifier = Modifier.size(PocketTheme.sizes.minimumTouchTarget),
+                ) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "Project options for ${project.name}",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(
                         text = { Text("Rename project") },
