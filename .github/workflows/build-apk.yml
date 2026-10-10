@@ -26,13 +26,13 @@ jobs:
     steps:
       - name: Guard target branch
         run: |
-          # Exact pattern matching: the stable integration branch, or a design
-          # branch with a non-empty name. Nothing else, including main.
+          # Exact pattern matching: the stable integration branch, or a design or
+          # security branch with a non-empty name. Nothing else, including main.
           case "${{ github.ref_name }}" in
-            fix/oom-and-shared-folder|design/?*) ;;
+            fix/oom-and-shared-folder|design/?*|security/?*) ;;
             *)
               echo "::error::Unsupported branch '${{ github.ref_name }}'."
-              echo "::error::Allowed branches: 'fix/oom-and-shared-folder' or a non-empty 'design/*' branch."
+              echo "::error::Allowed: 'fix/oom-and-shared-folder', non-empty 'design/*', or non-empty 'security/*'."
               exit 1
               ;;
           esac
