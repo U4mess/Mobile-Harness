@@ -116,6 +116,28 @@ class PocketColorsContrastTest {
         assertTextPairs(PocketForgeLightScheme, PocketForgeLightColors, "light")
     }
 
+    /**
+     * The Terminal empty-state message ("PocketForge Terminal ready") renders in
+     * [PocketColors.terminalEmpty] on a console surface. It previously used a hardcoded
+     * grey at 4.24:1, which read as disabled; this pins it above WCAG AA for ordinary
+     * text so a token change cannot silently regress it.
+     */
+    @Test
+    fun `terminal empty-state text clears 4_5 to 1 in both themes`() {
+        assertContrast(
+            "dark terminalEmpty/terminalSurface",
+            PocketForgeDarkColors.terminalEmpty,
+            PocketForgeDarkColors.terminalSurface,
+            4.5,
+        )
+        assertContrast(
+            "light terminalEmpty/terminalSurface",
+            PocketForgeLightColors.terminalEmpty,
+            PocketForgeLightColors.terminalSurface,
+            4.5,
+        )
+    }
+
     /** Non-text boundary: WCAG 1.4.11 wants >= 3:1 for meaningful boundaries. */
     private fun assertBorderStrong(scheme: ColorScheme, colors: PocketColors, name: String) {
         val surfaces = mapOf(

@@ -89,6 +89,7 @@ import androidx.compose.ui.unit.sp
 import com.jarves.mh.ui.theme.AppThemeMode
 import com.jarves.mh.ui.theme.PocketGreen
 import com.jarves.mh.ui.theme.PocketOrange
+import com.jarves.mh.ui.theme.PocketTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -305,7 +306,10 @@ fun TerminalScreen(
             val promptGreen = if (isDark) PocketGreen else Color(0xFF0D7A3E)
             val commandTextColor = if (isDark) Color(0xFFF0F6FC) else MaterialTheme.colorScheme.onSurface
             val outputTextColor = if (isDark) Color(0xFFC9D1D9) else MaterialTheme.colorScheme.onSurface
-            val emptyStateColor = if (isDark) Color(0xFF6E7681) else MaterialTheme.colorScheme.onSurfaceVariant
+            // Semantic token instead of a literal: the previous hardcoded grey sat at
+            // 4.24:1 against the console background, just under WCAG AA, which made the
+            // ready message read as disabled. terminalEmpty clears AA in both themes.
+            val emptyStateColor = PocketTheme.colors.terminalEmpty
 
             // Console output area
             Surface(

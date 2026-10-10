@@ -3182,14 +3182,14 @@ private fun ProjectsScreen(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(PocketTheme.spacing.space16),
-            verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space12),
+            contentPadding = PaddingValues(PocketTheme.spacing.space12),
+            verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space8),
         ) {
             // 1. Compact introduction. Heading semantics let a screen reader jump straight here.
             item {
                 Text(
                     "Projects",
-                    style = PocketTheme.typography.screenTitle,
+                    style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.semantics { heading() },
                 )
@@ -3251,7 +3251,7 @@ private fun ProjectsScreen(
             item {
                 Text(
                     "Your projects",
-                    style = PocketTheme.typography.sectionTitle,
+                    style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.semantics { heading() },
                 )
@@ -3437,7 +3437,6 @@ private fun ProjectsScreen(
                         ProjectsPresentation.terminalFabClearance(
                             fabHeight = PocketSizeTokens.comfortableControlHeight,
                             above = PocketSpacingTokens.space16,
-                            below = PocketSpacingTokens.space16,
                         ),
                     ),
                 )
@@ -3680,14 +3679,14 @@ internal object ProjectsPresentation {
 
     /**
      * Bottom content clearance so the global Terminal FAB can never cover the last
-     * project card or its overflow button: the FAB's visual height, plus spacing
-     * above it, plus list spacing below. Projects-specific, so it is derived here
-     * from existing tokens rather than added to the global size tokens.
+     * project card or its overflow button: the FAB's visual height plus the spacing
+     * above it. Projects-specific, so it is derived here from existing tokens rather
+     * than added to the global size tokens.
      *
      * Takes the metrics as parameters (rather than reading `PocketTheme`, whose
      * accessors are `@Composable`) so the same formula is callable from the unit test.
      */
-    fun terminalFabClearance(fabHeight: Dp, above: Dp, below: Dp): Dp = fabHeight + above + below
+    fun terminalFabClearance(fabHeight: Dp, above: Dp): Dp = fabHeight + above
 }
 
 @Composable
@@ -3873,9 +3872,9 @@ private fun ProjectCard(
     ) {
         Row(
             Modifier.padding(
-                start = PocketTheme.spacing.space16,
-                top = PocketTheme.spacing.space12,
-                bottom = PocketTheme.spacing.space12,
+                start = PocketTheme.spacing.space12,
+                top = PocketTheme.spacing.space8,
+                bottom = PocketTheme.spacing.space8,
                 end = PocketTheme.spacing.space4,
             ),
             verticalAlignment = Alignment.CenterVertically,
@@ -3885,7 +3884,7 @@ private fun ProjectCard(
                     Icons.Default.Folder,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(PocketTheme.spacing.space12),
+                    modifier = Modifier.padding(PocketTheme.spacing.space8),
                 )
             }
             Spacer(Modifier.width(PocketTheme.spacing.space12))

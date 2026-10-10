@@ -51,8 +51,20 @@ fun PocketTheme(themeMode: AppThemeMode = AppThemeMode.SYSTEM, content: @Composa
     ) {
         MaterialTheme(
             colorScheme = if (isDark) PocketForgeDarkScheme else PocketForgeLightScheme,
-            typography = PocketTypography.material,
-            shapes = PocketShapes,
+            // Typography and shapes are deliberately NOT installed globally.
+            //
+            // Unmigrated screens (Agent, Settings, Chat, Terminal, onboarding,
+            // dialogs) still use bare `MaterialTheme.typography.*` and
+            // `MaterialTheme.shapes.*`, and Material components read the whole
+            // type/shape set internally. Installing the Pocket scale globally
+            // resized and re-rounded every one of those screens at once, before
+            // any of them had been visually validated for it.
+            //
+            // Migrated screens opt in explicitly through `PocketTheme.typography`
+            // and `PocketTheme.radii`. Install the Pocket scales globally only
+            // once every screen has been migrated and visually validated on a
+            // device; until then Material 3 defaults are the compatibility
+            // baseline.
             content = content,
         )
     }

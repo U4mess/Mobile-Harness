@@ -60,14 +60,13 @@ class ProjectsScreenTest {
     // ── FAB bottom clearance ────────────────────────────────────────────────
 
     @Test
-    fun `terminal FAB clearance is the comfortable control height plus two spacings`() {
+    fun `terminal FAB clearance is the comfortable control height plus one spacing`() {
         val clearance = ProjectsPresentation.terminalFabClearance(
             fabHeight = PocketSizeTokens.comfortableControlHeight,
             above = PocketSpacingTokens.space16,
-            below = PocketSpacingTokens.space16,
         )
         assertEquals(56.dp, PocketSizeTokens.comfortableControlHeight)
-        assertEquals(88.dp, clearance)
+        assertEquals(72.dp, clearance)
     }
 
     @Test
@@ -75,7 +74,6 @@ class ProjectsScreenTest {
         val clearance = ProjectsPresentation.terminalFabClearance(
             fabHeight = PocketSizeTokens.comfortableControlHeight,
             above = PocketSpacingTokens.space16,
-            below = PocketSpacingTokens.space16,
         )
         assertTrue(
             "clearance $clearance must exceed the FAB height ${PocketSizeTokens.comfortableControlHeight}",
