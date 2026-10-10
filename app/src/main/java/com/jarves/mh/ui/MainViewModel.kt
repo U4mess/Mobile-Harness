@@ -58,6 +58,7 @@ import com.jarves.mh.runtime.supportsArm64Runtime
 import com.jarves.mh.runtime.AndroidAppInstaller
 import com.jarves.mh.update.AppUpdateInfo
 import com.jarves.mh.update.AppUpdater
+import com.jarves.mh.update.IncompatibleUpdateException
 import java.io.File
 import java.io.RandomAccessFile
 import java.net.UnknownHostException
@@ -249,6 +250,12 @@ data class AppUiState(
     val appUpdateDownloadedBytes: Long = 0L,
     val appUpdateTotalBytes: Long = -1L,
     val appUpdateError: String? = null,
+    /**
+     * True while [appUpdateError] describes an artifact that can never be installed on
+     * this device (wrong package or signing identity), as opposed to a retryable network
+     * or filesystem failure. The Download action is not offered in this state.
+     */
+    val appUpdateIncompatible: Boolean = false,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -1178,6 +1185,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             pingApi()
+            // Bounded, allow-listed cleanup of stale updater files, including the legacy
+            // Mobile Harness partials left behind by the old upstream channel.
+            runCatching { appUpdater().cleanupStaleFiles() }
             checkForAppUpdate()
         } else {
             showStartupError(result.exceptionOrNull() ?: IllegalStateException("Claude Code initialization failed"))
@@ -1189,13 +1199,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val update = runCatching { appUpdater().check() }.getOrNull()
             preferences.lastAppUpdateCheckMillis = System.currentTimeMillis()
-            if (update != null) {
+            if (update != null && !updateSuppression.isSuppressed(update.versionCode, update.apkUrl)) {
                 _state.update {
-                    it.copy(appUpdate = update, appUpdateStatus = AppUpdateStatus.AVAILABLE, appUpdateError = null)
+                    it.copy(
+                        appUpdate = update,
+                        appUpdateStatus = AppUpdateStatus.AVAILABLE,
+                        appUpdateError = null,
+                        appUpdateIncompatible = false,
+                    )
                 }
             }
         }
     }
+
+    /**
+     * Session-scoped suppression of permanently incompatible updates. Identified by
+     * manifest version plus artifact URL, so a genuinely different release is still
+     * offered while the rejected one is not. Nothing is persisted in AppPreferences.
+     */
+    private val updateSuppression = com.jarves.mh.update.UpdateSuppressionPolicy()
 
     /** Debug builds only: persist a manifest URL override and re-check immediately. */
     fun setDebugUpdateManifestUrl(url: String) {
@@ -1237,13 +1259,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _state.update { it.copy(appUpdateStatus = AppUpdateStatus.ERROR, appUpdateError = error.message ?: "Could not start the Android installer") }
                 }
             }.onFailure { error ->
-                _state.update { it.copy(appUpdateStatus = AppUpdateStatus.ERROR, appUpdateError = error.message ?: "Update download failed") }
+                if (error is IncompatibleUpdateException) {
+                    // Permanent: record the key so this exact manifest version and artifact
+                    // is never offered or downloaded again this session, drop the actionable
+                    // offer so no Download action remains, and surface a compatibility
+                    // message that carries no URL, path, signer value or exception text.
+                    updateSuppression.suppress(info.versionCode, info.apkUrl)
+                    _state.update {
+                        it.copy(
+                            appUpdate = null,
+                            appUpdateStatus = AppUpdateStatus.ERROR,
+                            appUpdateError = getApplication<Application>().getString(R.string.update_incompatible),
+                            appUpdateIncompatible = true,
+                            appUpdateDownloadedBytes = 0L,
+                            appUpdateTotalBytes = -1L,
+                        )
+                    }
+                } else {
+                    // Transient (network, interrupted transfer, filesystem): stays retryable.
+                    _state.update { it.copy(appUpdateStatus = AppUpdateStatus.ERROR, appUpdateError = error.message ?: "Update download failed") }
+                }
             }
         }
     }
 
     fun dismissAppUpdateError() {
-        _state.update { it.copy(appUpdateStatus = AppUpdateStatus.AVAILABLE, appUpdateError = null) }
+        _state.update {
+            if (it.appUpdateIncompatible) {
+                // A permanently incompatible artifact must not regain a Download action.
+                // Keep the message; drop only the transient-looking error styling.
+                it.copy(appUpdateStatus = AppUpdateStatus.ERROR, appUpdateError = it.appUpdateError, appUpdate = null)
+            } else {
+                it.copy(appUpdateStatus = AppUpdateStatus.AVAILABLE, appUpdateError = null)
+            }
+        }
     }
 
     private fun mergeStartupLog(

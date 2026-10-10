@@ -32,6 +32,10 @@
     <string name="update_notes_fallback">Get the latest improvements and fixes for %1$s.</string>
     <string name="update_unknown_sources_hint" formatted="false">Allow \u2018Install unknown apps\u2019 for %1$s. Without this permission, Android will not install the update.</string>
     <string name="update_package_mismatch">Update package name does not match %1$s</string>
+    <!-- Shown when a downloaded update can never be installed here. Deliberately free of
+         URLs, file paths, signer fingerprints and exception detail. -->
+    <string name="update_incompatible">This update cannot be installed because it was built for a different PocketForge package or signing identity.</string>
+    <string name="update_channel_unavailable">PocketForge updates are not configured for this build.</string>
 
     <string name="credits_title" formatted="false">Credits &amp; licenses</string>
     <string name="credits_based_on">Based on Mobile Harness by Tech Jarves</string>

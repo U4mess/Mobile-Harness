@@ -136,7 +136,7 @@ private fun LegacySettingsScreen(
                         Icon(
                             Icons.Default.Settings,
                             contentDescription = null,
-                            tint = PocketOrange,
+                            tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(24.dp),
                         )
                         Spacer(Modifier.width(10.dp))
@@ -799,7 +799,7 @@ private fun ThemeOptionCard(
             .clickable(onClick = onClick)
             .border(
                 width = if (selected) 2.dp else 1.dp,
-                color = if (selected) PocketOrange else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                 shape = RoundedCornerShape(14.dp),
             ),
         shape = RoundedCornerShape(14.dp),
@@ -815,7 +815,7 @@ private fun ThemeOptionCard(
             Icon(
                 icon,
                 contentDescription = title,
-                tint = if (selected) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(22.dp),
             )
             Text(

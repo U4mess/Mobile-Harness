@@ -27,8 +27,19 @@ val hasUploadSigning = listOf(
 ).all { !it.isNullOrBlank() }
 val runtimeReleaseBaseUrl =
     "https://github.com/techjarves/Mobile-Harness/releases/download/runtime-2026.09.4"
-val appUpdateManifestUrl =
-    "https://github.com/techjarves/Mobile-Harness/releases/latest/download/mobile-harness-update.json"
+// PocketForge is a fork, but it must NOT consume techjarves' app-update manifest: that
+// manifest advertises com.jarves.mh APKs signed with the upstream key, so any offer it
+// makes is permanently incompatible with a PocketForge install and Android would reject
+// it. A PocketForge update is only installable when the artifact shares this app's
+// application ID AND its signing identity, so the channel must be served from a
+// U4mess-controlled manifest.
+//
+// Until that manifest exists this default stays empty, and AppUpdater treats a non-https
+// URL as "no update", so automatic checks fail silently rather than offering an
+// incompatible download. A deliberate build-time override may exercise a channel:
+//   ./gradlew assembleOnlineDebug -PappUpdateManifestUrl=https://example.invalid/update.json
+val appUpdateManifestUrl: String =
+    providers.gradleProperty("appUpdateManifestUrl").getOrElse("")
 val runtimeBundleDir = rootProject.layout.projectDirectory.dir("dist/runtime-bundles")
 val generatedRuntimeAssets = layout.buildDirectory.dir("generated/runtime-assets")
 
@@ -77,8 +88,8 @@ android {
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 5
-        versionName = "1.0.4"
+        versionCode = 6
+        versionName = "1.0.5"
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
         providers.gradleProperty("appVersionName").orNull?.let { versionName = it }
 
