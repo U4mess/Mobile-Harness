@@ -1,8 +1,10 @@
 package com.jarves.mh.ui
 
 import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,127 +22,189 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import com.jarves.mh.R
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.jarves.mh.BuildConfig
+import com.jarves.mh.R
+import com.jarves.mh.data.ApiKeyInfo
+import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.DevStack
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
-import com.jarves.mh.model.AgentKind
 import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.DiscoveredModel
 import com.jarves.mh.network.ModelDiscoveryResult
 import com.jarves.mh.ui.theme.AppThemeMode
-import com.jarves.mh.ui.theme.PocketGreen
-import com.jarves.mh.ui.theme.PocketOrange
-import kotlinx.coroutines.launch
+import com.jarves.mh.ui.theme.PocketSizeTokens
+import com.jarves.mh.ui.theme.PocketTheme
+import com.jarves.mh.ui.theme.PocketSpacingTokens
+
+private enum class SettingsSection { APPEARANCE, TOOLS, RUNTIME, UPDATE_CHANNEL }
+
+/**
+ * Settings presentation policy.
+ *
+ * The rules live here as plain values so they can be asserted directly in a unit test
+ * rather than restated there. Colours are resolved by the caller from `MaterialTheme` /
+ * `PocketTheme`, because those accessors are `@Composable`.
+ */
+internal object SettingsPresentation {
+
+    /**
+     * Bottom clearance for the settings list so the last row scrolls fully above the
+     * bottom navigation: the comfortable control height plus one spacing step.
+     * Settings-specific, so it is derived from existing tokens rather than added to them.
+     */
+    fun listBottomClearance(controlHeight: Dp, gap: Dp): Dp = controlHeight + gap
+
+    /** Collapsed subtitles. The update channel must never imply an available channel. */
+    const val UPDATE_CHANNEL_DORMANT = "Not configured in this build"
+    const val UPDATE_CHANNEL_OVERRIDDEN = "Overridden · debug only"
+
+    /** Trailing action/state a toolchain row shows, in precedence order. */
+    enum class ToolchainState { REMOVING, INSTALLING, INCLUDED, INSTALLED, AVAILABLE }
+
+    fun toolchainState(
+        installed: Boolean,
+        installing: Boolean,
+        removing: Boolean,
+        isCore: Boolean,
+    ): ToolchainState = when {
+        removing -> ToolchainState.REMOVING
+        installing -> ToolchainState.INSTALLING
+        !installed -> ToolchainState.AVAILABLE
+        isCore -> ToolchainState.INCLUDED
+        else -> ToolchainState.INSTALLED
+    }
+
+    /** Toolchain descriptions wrap to two lines before ellipsising. */
+    const val TOOLCHAIN_DESCRIPTION_MAX_LINES = 2
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun LegacySettingsScreen(
+fun SettingsScreen(
     state: AppUiState,
-    onSaveProvider: (ProviderProfile, String) -> Unit,
-    onDiscoverModels: suspend (ProviderProfile, String) -> ModelDiscoveryResult,
-    onValidateProvider: suspend (ProviderProfile, String, List<DiscoveredModel>) -> ConnectionValidation,
     onSetThemeMode: (AppThemeMode) -> Unit,
-    onPing: () -> Unit,
     onClearTerminal: () -> Unit,
-    getSavedApiKey: (ProviderKind) -> String,
     onInstallDevStack: (DevStack) -> Unit = {},
+    onRemoveDevStack: (DevStack) -> Unit = {},
+    initialDebugUpdateManifestUrl: String = "",
+    onSetDebugUpdateManifestUrl: (String) -> Unit = {},
+    onClearDebugUpdateManifestUrl: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var selectedKind by rememberSaveable(state.provider.kind) { mutableStateOf(state.provider.kind) }
-    var baseUrl by rememberSaveable(state.provider.baseUrl) {
-        mutableStateOf(state.provider.baseUrl.ifBlank { state.provider.kind.defaultBaseUrl })
-    }
-    var model by rememberSaveable(state.provider.model) {
-        mutableStateOf(state.provider.model.ifBlank { state.provider.kind.defaultModel })
-    }
-    var apiKey by rememberSaveable { mutableStateOf(getSavedApiKey(state.provider.kind)) }
-    var keyVisible by rememberSaveable { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
+    var terminalCleared by remember { mutableStateOf(false) }
+    var showReliabilityHelp by rememberSaveable { mutableStateOf(false) }
+    var stackPendingRemoval by remember { mutableStateOf<DevStack?>(null) }
+    var showCredits by remember { mutableStateOf(false) }
 
-    var isDiscovering by remember { mutableStateOf(false) }
-    var isValidating by remember { mutableStateOf(false) }
-    var validationStatus by remember { mutableStateOf<String?>(null) }
-    var validationOk by remember { mutableStateOf(false) }
-    var discoveredModels by remember(baseUrl) { mutableStateOf(emptyList<DiscoveredModel>()) }
-    var terminalClearedMessage by remember { mutableStateOf(false) }
-    var showChildProcessHelp by rememberSaveable { mutableStateOf(false) }
+    stackPendingRemoval?.let { stack ->
+        AlertDialog(
+            onDismissRequest = { stackPendingRemoval = null },
+            title = { Text("Remove ${stack.label}?") },
+            text = {
+                Text("This removes the toolchain and its runtime caches to free storage. Your projects and source files will not be deleted.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        stackPendingRemoval = null
+                        onRemoveDevStack(stack)
+                    },
+                ) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { stackPendingRemoval = null }) { Text("Cancel") } },
+        )
+    }
+
+    fun toggle(section: SettingsSection) {
+        expanded = if (expanded == section) null else section
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
+                modifier = Modifier.padding(top = 8.dp),
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp),
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .background(
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                    shape = MaterialTheme.shapes.small,
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
+                                    shape = MaterialTheme.shapes.small,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(17.dp),
+                            )
+                        }
                         Spacer(Modifier.width(10.dp))
-                        Text("Settings", fontWeight = FontWeight.Bold)
+                        Column {
+                            Text("Settings", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+                            Text("Preferences & Configuration", style = PocketTheme.typography.metadata, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
@@ -148,709 +212,520 @@ private fun LegacySettingsScreen(
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .imePadding(),
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+            Modifier.fillMaxSize().padding(padding).imePadding(),
+            contentPadding = PaddingValues(
+                start = PocketTheme.spacing.space16,
+                end = PocketTheme.spacing.space16,
+                top = PocketTheme.spacing.space12,
+                // Keeps the final row clear of the bottom navigation.
+                bottom = SettingsPresentation.listBottomClearance(
+                    controlHeight = PocketSizeTokens.comfortableControlHeight,
+                    gap = PocketSpacingTokens.space16,
+                ),
+            ),
+            verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space12),
         ) {
-            // -------------------------------------------------------------
-            // 1. APPEARANCE / THEME
-            // -------------------------------------------------------------
+
             item {
-                SectionHeader(
+                SettingsAccordion(
                     title = "Appearance",
-                    subtitle = "Customize app theme and styling",
+                    subtitle = when (state.themeMode) { AppThemeMode.DARK -> "Dark theme"; AppThemeMode.LIGHT -> "Light theme"; AppThemeMode.SYSTEM -> "Follow system" },
                     icon = Icons.Default.Tune,
-                )
-                Spacer(Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    expanded = expanded == SettingsSection.APPEARANCE,
+                    onClick = { toggle(SettingsSection.APPEARANCE) },
                 ) {
-                    ThemeOptionCard(
-                        title = "Dark",
-                        icon = Icons.Default.DarkMode,
-                        selected = state.themeMode == AppThemeMode.DARK,
-                        onClick = { onSetThemeMode(AppThemeMode.DARK) },
-                        modifier = Modifier.weight(1f),
-                    )
-                    ThemeOptionCard(
-                        title = "Light",
-                        icon = Icons.Default.LightMode,
-                        selected = state.themeMode == AppThemeMode.LIGHT,
-                        onClick = { onSetThemeMode(AppThemeMode.LIGHT) },
-                        modifier = Modifier.weight(1f),
-                    )
-                    ThemeOptionCard(
-                        title = "System",
-                        icon = Icons.Default.PhoneAndroid,
-                        selected = state.themeMode == AppThemeMode.SYSTEM,
-                        onClick = { onSetThemeMode(AppThemeMode.SYSTEM) },
-                        modifier = Modifier.weight(1f),
-                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ModernThemeChoice("Dark", Icons.Default.DarkMode, state.themeMode == AppThemeMode.DARK, { onSetThemeMode(AppThemeMode.DARK) }, Modifier.weight(1f))
+                        ModernThemeChoice("Light", Icons.Default.LightMode, state.themeMode == AppThemeMode.LIGHT, { onSetThemeMode(AppThemeMode.LIGHT) }, Modifier.weight(1f))
+                        ModernThemeChoice("System", Icons.Default.PhoneAndroid, state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
+                    }
                 }
             }
 
-            // -------------------------------------------------------------
-            // 2. DEVELOPER TOOLS
-            // -------------------------------------------------------------
             item {
-                SectionHeader(
+                val installedCount = state.installedDevStacks.count { it != DevStack.WEB }
+                SettingsAccordion(
                     title = "Developer tools",
-                    subtitle = "Language toolchains inside the Ubuntu runtime",
+                    subtitle = "Core tools + $installedCount optional toolchain${if (installedCount == 1) "" else "s"}",
                     icon = Icons.Default.Code,
-                )
-                Spacer(Modifier.height(10.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                    expanded = expanded == SettingsSection.TOOLS,
+                    onClick = { toggle(SettingsSection.TOOLS) },
                 ) {
-                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                        Text(
-                            "Node.js, npm, and Git are always installed — Claude Code runs on them.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    Text("Node.js, npm, Git, and Claude Code are included.", style = PocketTheme.typography.supporting, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(PocketTheme.spacing.space8))
+                    DevStack.entries.forEachIndexed { index, stack ->
+                        val installed = stack in state.installedDevStacks
+                        val installing = state.devStackInstalling == stack
+                        val removing = installing && state.devStackRemoving
+                        val rowState = SettingsPresentation.toolchainState(
+                            installed = installed,
+                            installing = installing,
+                            removing = removing,
+                            isCore = stack == DevStack.WEB,
                         )
-                        Spacer(Modifier.height(12.dp))
-                        DevStack.entries.forEachIndexed { index, stack ->
-                            val installed = stack in state.installedDevStacks
-                            val installing = state.devStackInstalling == stack
-                            Column(Modifier.fillMaxWidth()) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                ) {
-                                    Column(Modifier.weight(1f)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(stack.label, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                            if (installed) {
-                                                Spacer(Modifier.width(7.dp))
-                                                Icon(
-                                                    Icons.Default.CheckCircle,
-                                                    "Installed",
-                                                    tint = PocketGreen,
-                                                    modifier = Modifier.size(15.dp),
-                                                )
-                                            }
-                                        }
-                                        Text(
-                                            stack.installsSummary,
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                    when {
-                                        installing -> {
-                                            Text(
-                                                "${(state.devStackProgress * 100).toInt().coerceIn(0, 100)}%",
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.sp,
-                                                color = PocketOrange,
-                                            )
-                                        }
-                                        installed -> Unit // badge already shown next to the name
-                                        else -> {
-                                            OutlinedButton(
-                                                onClick = { onInstallDevStack(stack) },
-                                                enabled = state.devStackInstalling == null,
-                                                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 5.dp),
-                                            ) { Text("Add") }
-                                        }
-                                    }
-                                }
-                                if (installing) {
-                                    Spacer(Modifier.height(9.dp))
-                                    LinearProgressIndicator(
-                                        progress = { state.devStackProgress.coerceIn(0f, 1f) },
-                                        modifier = Modifier.fillMaxWidth().height(8.dp),
-                                        color = PocketOrange,
-                                        trackColor = MaterialTheme.colorScheme.surface,
-                                    )
-                                    Spacer(Modifier.height(6.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Text(
-                                            state.devStackMessage ?: "Working…",
-                                            fontSize = 11.sp,
-                                            maxLines = 1,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                        state.devStackBytes?.let { (downloaded, total) ->
-                                            if (total > 0) {
-                                                Text(
-                                                    "${formatBytes(downloaded)} / ${formatBytes(total)}",
-                                                    fontSize = 11.sp,
-                                                    fontFamily = FontFamily.Monospace,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                )
-                                            }
-                                        }
-                                    }
-                                    state.devStackBytesPerSecond?.takeIf { it > 0L }?.let { speed ->
-                                        Text(
-                                            "${formatBytes(speed)}/s",
-                                            fontSize = 11.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            color = PocketOrange,
-                                        )
-                                    }
-                                } else if (index != DevStack.entries.lastIndex) {
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(top = 11.dp),
-                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
-                                    )
-                                }
-                            }
-                            if (!installing && index != DevStack.entries.lastIndex) {
-                                Spacer(Modifier.height(11.dp))
-                            }
-                        }
-                        if (state.devStackInstalling == null) {
-                            state.devStackMessage?.let { message ->
-                                Spacer(Modifier.height(10.dp))
-                                Text(message, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // -------------------------------------------------------------
-            // 3. AI PROVIDER & CONNECTION
-            // -------------------------------------------------------------
-            item {
-                SectionHeader(
-                    title = "AI Provider & Model",
-                    subtitle = "Configure endpoint, model, and API key",
-                    icon = Icons.Default.SmartToy,
-                )
-                Spacer(Modifier.height(10.dp))
-
-                // Current Live Status Card
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                "ACTIVE ENDPOINT",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                state.provider.model.ifBlank { state.provider.kind.defaultModel },
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 15.sp,
-                            )
-                            Text(
-                                state.provider.baseUrl.ifBlank { "Default Gateway" },
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                            )
-                        }
-
-                        // Ping indicator + manual test button
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surface,
-                            modifier = Modifier.clickable { onPing() },
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(CircleShape)
-                                        .background(
-                                            when (state.apiPingStatus) {
-                                                ApiPingStatus.OK -> PocketGreen
-                                                ApiPingStatus.FAILED -> MaterialTheme.colorScheme.error
-                                                ApiPingStatus.PINGING -> PocketOrange
-                                                ApiPingStatus.IDLE -> MaterialTheme.colorScheme.onSurfaceVariant
-                                            },
-                                        ),
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    when (state.apiPingStatus) {
-                                        ApiPingStatus.OK -> "Online"
-                                        ApiPingStatus.FAILED -> "Offline"
-                                        ApiPingStatus.PINGING -> "Checking"
-                                        ApiPingStatus.IDLE -> "Test"
-                                    },
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Icon(
-                                    Icons.Default.Refresh,
-                                    contentDescription = "Ping",
-                                    modifier = Modifier.size(14.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(14.dp))
-
-                // Provider Kind Selection
-                Text("Select Provider", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                Spacer(Modifier.height(8.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ProviderKind.entries.forEach { kind ->
-                        val isSelected = selectedKind == kind
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    if (selectedKind != kind) {
-                                        selectedKind = kind
-                                        baseUrl = kind.defaultBaseUrl
-                                        model = kind.defaultModel
-                                        val saved = getSavedApiKey(kind)
-                                        apiKey = saved
-                                        validationStatus = null
-                                    }
-                                },
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                            border = if (!isSelected) CardDefaults.outlinedCardBorder() else null,
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(
-                                    Icons.Default.Key,
-                                    contentDescription = null,
-                                    tint = if (isSelected) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(Modifier.width(10.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(kind.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                        if (kind.experimental) {
-                                            Spacer(Modifier.width(6.dp))
-                                            Text("EXPERIMENTAL", color = PocketOrange, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                    Text(kind.subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                if (isSelected) {
-                                    Icon(Icons.Default.Check, contentDescription = null, tint = PocketOrange, modifier = Modifier.size(18.dp))
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(14.dp))
-
-                // Base URL
-                OutlinedTextField(
-                    value = baseUrl,
-                    onValueChange = { baseUrl = it; validationStatus = null },
-                    label = { Text("Base URL") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = PocketOrange,
-                    ),
-                )
-
-                Spacer(Modifier.height(10.dp))
-
-                // Model Name + Discover Button
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedTextField(
-                        value = model,
-                        onValueChange = { model = it; validationStatus = null },
-                        label = { Text("Model name") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = PocketOrange,
-                        ),
-                    )
-                    OutlinedButton(
-                        onClick = {
-                            scope.launch {
-                                isDiscovering = true
-                                validationStatus = "Fetching models from …"
-                                validationOk = true
-                                val profile = ProviderProfile(selectedKind, baseUrl = baseUrl.trim(), model = model.trim())
-                                when (val result = onDiscoverModels(profile, apiKey.trim())) {
-                                    is ModelDiscoveryResult.Success -> {
-                                        discoveredModels = result.models
-                                        result.models.firstOrNull()?.let { model = it.id }
-                                        validationStatus = "Discovered ${result.models.size} models. Selected ${model}."
-                                        validationOk = true
-                                    }
-                                    is ModelDiscoveryResult.Failure -> {
-                                        validationStatus = result.message
-                                        validationOk = false
-                                    }
-                                }
-                                isDiscovering = false
-                            }
-                        },
-                        enabled = baseUrl.isNotBlank() && !isDiscovering && !isValidating,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.height(54.dp),
-                    ) {
-                        if (isDiscovering) {
-                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Default.Dns, contentDescription = "Discover", modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Fetch", fontSize = 13.sp)
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(10.dp))
-
-                // API Key with eye toggle
-                OutlinedTextField(
-                    value = apiKey,
-                    onValueChange = { apiKey = it; validationStatus = null },
-                    label = { Text("API Key") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    visualTransformation = if (keyVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                    trailingIcon = {
-                        IconButton(onClick = { keyVisible = !keyVisible }) {
-                            Icon(
-                                if (keyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                contentDescription = "Toggle API Key Visibility",
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = PocketOrange,
-                    ),
-                )
-
-                // Status banner
-                AnimatedVisibility(visible = validationStatus != null) {
-                    Column(Modifier.padding(top = 10.dp)) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = if (validationOk) PocketGreen.copy(alpha = 0.15f) else MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(
-                                    if (validationOk) Icons.Default.CheckCircle else Icons.Default.Warning,
-                                    contentDescription = null,
-                                    tint = if (validationOk) PocketGreen else MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    validationStatus.orEmpty(),
-                                    color = if (validationOk) PocketGreen else MaterialTheme.colorScheme.error,
-                                    fontSize = 12.sp,
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(14.dp))
-
-                // Test & Save Button
-                Button(
-                    onClick = {
-                        scope.launch {
-                            isValidating = true
-                            validationStatus = "Testing provider connection…"
-                            validationOk = true
-                            val profile = ProviderProfile(
-                                kind = selectedKind,
-                                baseUrl = baseUrl.trim(),
-                                model = model.trim(),
-                            )
-                            when (val result = onValidateProvider(profile, apiKey.trim(), discoveredModels)) {
-                                is ConnectionValidation.Success -> {
-                                    validationStatus = result.message
-                                    validationOk = true
-                                    onSaveProvider(profile, apiKey.trim())
-                                }
-                                is ConnectionValidation.Failure -> {
-                                    validationStatus = result.message
-                                    validationOk = false
-                                }
-                            }
-                            isValidating = false
-                        }
-                    },
-                    enabled = baseUrl.isNotBlank() && model.isNotBlank() && apiKey.isNotBlank() && !isDiscovering && !isValidating,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = PocketOrange),
-                ) {
-                    if (isValidating) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Testing Connection…", fontWeight = FontWeight.SemiBold)
-                    } else {
-                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Test Connection & Save", fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
-
-            // -------------------------------------------------------------
-            // 3. LINUX RUNTIME & ENVIRONMENT
-            // -------------------------------------------------------------
-            item {
-                SectionHeader(
-                    title = "Linux Environment",
-                    subtitle = "Local sandboxed execution engine",
-                    icon = Icons.Default.Terminal,
-                )
-                Spacer(Modifier.height(10.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        InfoRow(icon = Icons.Default.Memory, label = "Architecture", value = "ARM64 (aarch64)")
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                        InfoRow(icon = Icons.Default.Terminal, label = "Linux Rootfs", value = "Ubuntu 20.04 PRoot")
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                        InfoRow(
-                            icon = Icons.Default.SmartToy,
-                            label = "Installed agents",
-                            value = AgentKind.entries.mapNotNull { agent ->
-                                state.installedAgentVersions[agent]?.let { version -> "${agent.title} v$version" }
-                            }.joinToString(" · ").ifBlank { "No verified agent installation" },
-                        )
-
-                        Spacer(Modifier.height(4.dp))
-                        OutlinedButton(
-                            onClick = {
-                                onClearTerminal()
-                                terminalClearedMessage = true
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                        ) {
-                            Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (terminalClearedMessage) "Terminal Cleared!" else "Clear Terminal History", fontSize = 13.sp)
-                        }
-
-                        OutlinedButton(
-                            onClick = { showChildProcessHelp = !showChildProcessHelp },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                        ) {
-                            Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Advanced runtime reliability", fontSize = 13.sp)
-                        }
-
-                        AnimatedVisibility(showChildProcessHelp) {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(
-                                    "Only use this if large npm or build tasks stop unexpectedly. In Developer options, enable “Disable child process restrictions”. The name may differ or be unavailable on some phones.",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    lineHeight = 17.sp,
-                                )
-                                Button(
-                                    onClick = {
-                                        runCatching {
-                                            context.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
-                                        }.onFailure {
-                                            context.startActivity(Intent(Settings.ACTION_SETTINGS))
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text("Open Developer options")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // -------------------------------------------------------------
-            // 4. ABOUT POCKET DEV
-            // -------------------------------------------------------------
-            item {
-                SectionHeader(
-                    title = "About",
-                    subtitle = "App details & build info",
-                    icon = Icons.Default.Settings,
-                )
-                Spacer(Modifier.height(10.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget)
+                                .padding(vertical = PocketTheme.spacing.space8),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(stringResource(R.string.app_name), fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                            Text("v1.0.0", color = PocketOrange, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            Column(Modifier.weight(1f)) {
+                                Text(stack.label, style = PocketTheme.typography.rowTitle, color = MaterialTheme.colorScheme.onSurface)
+                                Text(
+                                    stack.installsSummary,
+                                    style = PocketTheme.typography.supporting,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = SettingsPresentation.TOOLCHAIN_DESCRIPTION_MAX_LINES,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Spacer(Modifier.width(PocketTheme.spacing.space8))
+                            when (rowState) {
+                                SettingsPresentation.ToolchainState.REMOVING ->
+                                    Text("Removing…", style = PocketTheme.typography.metadata, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                SettingsPresentation.ToolchainState.INSTALLING ->
+                                    Text(
+                                        "${(state.devStackProgress * 100).toInt()}%",
+                                        style = PocketTheme.typography.buttonLabel,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                SettingsPresentation.ToolchainState.INCLUDED ->
+                                    Text("Included", style = PocketTheme.typography.metadata, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                SettingsPresentation.ToolchainState.INSTALLED -> Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = PocketTheme.colors.success,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Spacer(Modifier.width(PocketTheme.spacing.space4))
+                                    Text(
+                                        "Installed",
+                                        style = PocketTheme.typography.metadata,
+                                        color = PocketTheme.colors.success,
+                                    )
+                                    Spacer(Modifier.width(PocketTheme.spacing.space8))
+                                    TextButton(
+                                        onClick = { stackPendingRemoval = stack },
+                                        enabled = state.devStackInstalling == null,
+                                    ) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+                                }
+                                SettingsPresentation.ToolchainState.AVAILABLE ->
+                                    OutlinedButton(
+                                        onClick = { onInstallDevStack(stack) },
+                                        enabled = state.devStackInstalling == null,
+                                    ) { Text("Add") }
+                            }
                         }
+                        if (installing) {
+                            Spacer(Modifier.height(PocketTheme.spacing.space4))
+                            LinearProgressIndicator(
+                                progress = { state.devStackProgress.coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth().height(7.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                            )
+                            Spacer(Modifier.height(PocketTheme.spacing.space4))
+                            state.devStackBytes?.let { (downloaded, total) ->
+                                Column(verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space4)) {
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text(
+                                            "${formatTransferMb(downloaded)} of ${formatTransferMb(total)}",
+                                            style = PocketTheme.typography.metadata,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                        state.devStackBytesPerSecond?.takeIf { it > 0L }?.let { speed ->
+                                            Text(
+                                                "${formatTransferSpeed(speed)} · ${formatTransferEta(downloaded, total, speed)} left",
+                                                style = PocketTheme.typography.metadata,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontFamily = FontFamily.Monospace,
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        state.devStackMessage ?: "Downloading…",
+                                        style = PocketTheme.typography.metadata,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            } ?: Text(
+                                state.devStackMessage ?: "Processing…",
+                                style = PocketTheme.typography.metadata,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (index != DevStack.entries.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    }
+                }
+            }
+
+            item {
+                SettingsAccordion(
+                    title = "Linux runtime",
+                    subtitle = "Ubuntu 20.04 PRoot · ARM64",
+                    icon = Icons.Default.Terminal,
+                    expanded = expanded == SettingsSection.RUNTIME,
+                    onClick = { toggle(SettingsSection.RUNTIME) },
+                ) {
+                    RuntimeInfoRow("Architecture", "ARM64 (aarch64)")
+                    RuntimeInfoRow("Environment", "Ubuntu 20.04 PRoot")
+                    RuntimeInfoRow(
+                        "Active agent",
+                        state.agentKind.title + if (state.installedAgentVersions.containsKey(state.agentKind)) "" else " · Not installed",
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Text(
+                        "Installed agents",
+                        style = PocketTheme.typography.metadata,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (state.installedAgentVersions.isEmpty()) {
+                        RuntimeInfoRow("Status", "No verified agent installation")
+                    } else {
+                        AgentKind.entries.forEach { agent ->
+                            state.installedAgentVersions[agent]?.let { version ->
+                                RuntimeInfoRow(agent.title, "v$version")
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { onClearTerminal(); terminalCleared = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.DeleteSweep, null, Modifier.size(17.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text(if (terminalCleared) "Terminal history cleared" else "Clear terminal history")
+                    }
+                    OutlinedButton(
+                        onClick = { showReliabilityHelp = !showReliabilityHelp },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Advanced runtime reliability")
+                    }
+                    AnimatedVisibility(showReliabilityHelp) {
+                        Column(verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space8)) {
+                            Text(
+                                "If large builds stop unexpectedly, Android Developer options may provide a child-process restriction toggle.",
+                                style = PocketTheme.typography.supporting,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Button(
+                                onClick = {
+                                    runCatching { context.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) }
+                                        .onFailure { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Open Developer options") }
+                        }
+                    }
+                }
+            }
+
+            if (BuildConfig.DEBUG) {
+                item {
+                    DebugUpdateChannelSection(
+                        initialUrl = initialDebugUpdateManifestUrl,
+                        onSave = onSetDebugUpdateManifestUrl,
+                        onClear = onClearDebugUpdateManifestUrl,
+                    )
+                }
+            }
+
+            item {
+                Surface(
+                    color = Color.Transparent,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Default.Settings, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(PocketTheme.spacing.space12))
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.app_name), style = PocketTheme.typography.rowTitle, color = MaterialTheme.colorScheme.onSurface)
+                            Text(
+                                stringResource(R.string.app_branded_by),
+                                style = PocketTheme.typography.supporting,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(Modifier.width(PocketTheme.spacing.space8))
                         Text(
-                            "Autonomous AI Developer with native on-device Linux PRoot sandbox and Claude Code integration.",
-                            fontSize = 12.sp,
+                            "v${BuildConfig.VERSION_NAME}",
+                            style = PocketTheme.typography.metadata,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            lineHeight = 18.sp,
                         )
                     }
                 }
-                Spacer(Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            runCatching {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.PRIVACY_POLICY_URL)),
+                                )
+                            }
+                        }
+                        .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget)
+                        .padding(vertical = PocketTheme.spacing.space8),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Default.PrivacyTip,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(PocketTheme.spacing.space12))
+                    Column(Modifier.weight(1f)) {
+                        Text("Privacy policy", style = PocketTheme.typography.rowTitle, color = MaterialTheme.colorScheme.onSurface)
+                        Text(
+                            "How local data and AI provider requests are handled",
+                            style = PocketTheme.typography.supporting,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Icon(
+                        Icons.AutoMirrored.Filled.OpenInNew,
+                        contentDescription = "Open privacy policy",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showCredits = true }
+                        .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget)
+                        .padding(vertical = PocketTheme.spacing.space8),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Default.Terminal,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(PocketTheme.spacing.space12))
+                    Column(Modifier.weight(1f)) {
+                        Text(stringResource(R.string.credits_title), style = PocketTheme.typography.rowTitle, color = MaterialTheme.colorScheme.onSurface)
+                        Text(
+                            stringResource(R.string.credits_based_on),
+                            style = PocketTheme.typography.supporting,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Icon(
+                        Icons.AutoMirrored.Filled.OpenInNew,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
-}
 
-@Composable
-private fun SectionHeader(title: String, subtitle: String, icon: ImageVector) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Surface(
-            shape = RoundedCornerShape(10.dp),
-            color = PocketOrange.copy(alpha = 0.12f),
-            modifier = Modifier.size(36.dp),
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(icon, contentDescription = null, tint = PocketOrange, modifier = Modifier.size(18.dp))
-            }
-        }
-        Spacer(Modifier.width(10.dp))
-        Column {
-            Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+    if (showCredits) {
+        CreditsDialog(onDismiss = { showCredits = false })
     }
 }
 
+private fun formatTransferMb(bytes: Long): String = "%.1f MB".format(bytes.coerceAtLeast(0L) / 1_048_576.0)
+
+private fun formatTransferSpeed(bytesPerSecond: Long): String = when {
+    bytesPerSecond >= 1_048_576L -> "%.1f MB/s".format(bytesPerSecond / 1_048_576.0)
+    else -> "%.0f KB/s".format(bytesPerSecond / 1_024.0)
+}
+
+private fun formatTransferEta(downloaded: Long, total: Long, bytesPerSecond: Long): String {
+    val seconds = ((total - downloaded).coerceAtLeast(0L) / bytesPerSecond.coerceAtLeast(1L)).coerceAtLeast(1L)
+    return if (seconds >= 60L) "${seconds / 60}m ${seconds % 60}s" else "${seconds}s"
+}
+
 @Composable
-private fun ThemeOptionCard(
+private fun SettingsAccordion(
     title: String,
+    subtitle: String,
     icon: ImageVector,
-    selected: Boolean,
+    expanded: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
 ) {
     Surface(
-        modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
-            .border(
-                width = if (selected) 2.dp else 1.dp,
-                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                shape = RoundedCornerShape(14.dp),
-            ),
-        shape = RoundedCornerShape(14.dp),
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Icon(
-                icon,
-                contentDescription = title,
-                tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(22.dp),
-            )
-            Text(
-                title,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                fontSize = 13.sp,
-                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-            )
+        Column {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onClick)
+                    .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget)
+                    .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
+                    .padding(horizontal = PocketTheme.spacing.space12, vertical = PocketTheme.spacing.space8),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(32.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(icon, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
+                Spacer(Modifier.width(PocketTheme.spacing.space12))
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = PocketTheme.typography.rowTitle, color = MaterialTheme.colorScheme.onSurface)
+                    Text(
+                        subtitle,
+                        style = PocketTheme.typography.supporting,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.width(PocketTheme.spacing.space8))
+                Icon(
+                    if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    if (expanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            AnimatedVisibility(expanded) {
+                Column {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Column(
+                        Modifier.padding(PocketTheme.spacing.space12),
+                        verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space8),
+                    ) { content() }
+                }
+            }
         }
     }
 }
 
+
 @Composable
-private fun InfoRow(icon: ImageVector, label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+private fun ModernThemeChoice(title: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier
+            .clickable(onClick = onClick)
+            .defaultMinSize(minHeight = PocketTheme.sizes.comfortableControlHeight),
+        shape = MaterialTheme.shapes.small,
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(
+            if (selected) 1.5.dp else 1.dp,
+            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        ),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(
+            Modifier.padding(vertical = PocketTheme.spacing.space12, horizontal = PocketTheme.spacing.space8),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
             Icon(
                 icon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(16.dp),
+                Modifier.size(20.dp),
+                tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.width(8.dp))
-            Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(PocketTheme.spacing.space4))
+            Text(
+                title,
+                style = PocketTheme.typography.buttonLabel,
+                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
         }
-        Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
     }
 }
 
-private fun formatBytes(bytes: Long): String = when {
-    bytes < 1_024 -> "$bytes B"
-    bytes < 1_048_576 -> "%.1f KiB".format(bytes / 1_024.0)
-    else -> "%.1f MiB".format(bytes / 1_048_576.0)
+@Composable
+private fun RuntimeInfoRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.weight(1f), style = PocketTheme.typography.supporting, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = PocketTheme.typography.rowTitle, color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.End)
+    }
+}
+
+@Composable
+private fun DebugUpdateChannelSection(
+    initialUrl: String,
+    onSave: (String) -> Unit,
+    onClear: () -> Unit,
+) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var url by rememberSaveable(initialUrl) { mutableStateOf(initialUrl) }
+    val isOverridden = initialUrl.isNotBlank()
+    SettingsAccordion(
+        title = "Update channel",
+        subtitle = if (isOverridden) {
+            SettingsPresentation.UPDATE_CHANNEL_OVERRIDDEN
+        } else {
+            SettingsPresentation.UPDATE_CHANNEL_DORMANT
+        },
+        icon = Icons.Default.Tune,
+        expanded = expanded,
+        onClick = { expanded = !expanded },
+    ) {
+        Text(
+            "Automatic PocketForge updates are not configured for this build. Verified CI APKs are installed manually for now.",
+            style = PocketTheme.typography.supporting,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "The field below is a developer-only test override for this debug build. The upstream Mobile Harness release channel is not a PocketForge update channel.",
+            style = PocketTheme.typography.metadata,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(PocketTheme.spacing.space8))
+        OutlinedTextField(
+            value = url,
+            onValueChange = { url = it },
+            label = { Text("Manifest URL") },
+            placeholder = { Text("https://your-tunnel.example/mobile-harness-update.json") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(PocketTheme.spacing.space8))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space8),
+        ) {
+            Button(
+                onClick = { onSave(url) },
+                enabled = url.startsWith("https://"),
+                modifier = Modifier.weight(1f).defaultMinSize(minHeight = PocketTheme.sizes.standardControlHeight),
+            ) {
+                Text(if (isOverridden) "Replace" else "Use & check")
+            }
+            OutlinedButton(
+                onClick = onClear,
+                enabled = isOverridden,
+                modifier = Modifier.weight(1f).defaultMinSize(minHeight = PocketTheme.sizes.standardControlHeight),
+            ) {
+                Text("Reset")
+            }
+        }
+        if (isOverridden) {
+            Text(
+                "Current: $initialUrl",
+                style = PocketTheme.typography.metadata,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }

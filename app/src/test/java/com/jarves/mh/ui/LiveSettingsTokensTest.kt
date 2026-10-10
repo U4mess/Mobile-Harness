@@ -12,29 +12,27 @@ import org.junit.Test
 /**
  * Guards for the **live** Settings screen.
  *
- * This replaces the earlier `SettingsScreenTokensTest`, which asserted against
- * `SettingsScreen.kt` — a file whose only composable (`LegacySettingsScreen`) is
- * `private` and has no caller. That test stayed green while the screen users actually
- * see was untouched, so it could not have caught a regression.
+ * This replaced the earlier `SettingsScreenTokensTest`, which asserted against a legacy
+ * `SettingsScreen.kt` whose only composable (`LegacySettingsScreen`) was `private` and
+ * had no caller. That test stayed green while the screen users actually see was
+ * untouched, so it could not have caught a regression.
  *
- * Assertions here target `SettingsScreenModern.kt`, which declares the `SettingsScreen`
+ * That legacy file has since been deleted, the unreachable composables it duplicated
+ * removed, and the cleaned implementation renamed onto the canonical path. Settings now
+ * lives in exactly one file, `SettingsScreen.kt`, which declares the `SettingsScreen`
  * composable that `PocketDevApp` calls.
- *
- * Dead composables inside that file (`AntigravityConnectionSettings`,
- * `ConnectionSettings`, `SelectionDot`) are approved to retain their legacy colour
- * references until they are deleted, so colour assertions exclude them.
  */
 class LiveSettingsTokensTest {
 
     private val sourceText: String by lazy {
-        val f = File("src/main/java/com/jarves/mh/ui/SettingsScreenModern.kt")
-        assertTrue("SettingsScreenModern.kt not found at ${f.absolutePath}", f.isFile)
+        val f = File("src/main/java/com/jarves/mh/ui/SettingsScreen.kt")
+        assertTrue("SettingsScreen.kt not found at ${f.absolutePath}", f.isFile)
         f.readText()
     }
 
     private val lines: List<String> by lazy { sourceText.lines() }
 
-    /** Ranges of the approved-unreachable composables, by declaration and brace matching. */
+    /** Ranges of any unreachable composables; expected to be empty after cleanup. */
     private val deadRanges: List<IntRange> by lazy {
         listOf("AntigravityConnectionSettings", "ConnectionSettings", "SelectionDot").mapNotNull { name ->
             val start = lines.indexOfFirst { it.startsWith("private fun $name(") }
@@ -68,16 +66,33 @@ class LiveSettingsTokensTest {
     // ── Live/dead resolution ────────────────────────────────────────────────
 
     @Test
-    fun `the live SettingsScreen is declared in the modern file`() {
+    fun `the live SettingsScreen is declared in the canonical file`() {
         assertTrue(sourceText.contains("fun SettingsScreen("))
     }
 
     @Test
-    fun `the approved dead composables are still present and declaration-only`() {
-        for (name in listOf("AntigravityConnectionSettings", "ConnectionSettings")) {
+    fun `Settings lives in exactly one canonical file`() {
+        val canonical = File("src/main/java/com/jarves/mh/ui/SettingsScreen.kt")
+        val superseded = File("src/main/java/com/jarves/mh/ui/SettingsScreenModern.kt")
+        assertTrue("SettingsScreen.kt must exist", canonical.isFile)
+        assertFalse("SettingsScreenModern.kt must be gone", superseded.exists())
+    }
+
+    @Test
+    fun `exactly one production declaration is named SettingsScreen`() {
+        val declarations = lines.count { it.startsWith("fun SettingsScreen(") }
+        assertEquals("expected a single SettingsScreen declaration", 1, declarations)
+    }
+
+    @Test
+    fun `the obsolete dead composables are gone`() {
+        // AntigravityConnectionSettings, ConnectionSettings and SelectionDot were
+        // unreachable and have been deleted in their own cleanup.
+        for (name in listOf("AntigravityConnectionSettings", "ConnectionSettings", "SelectionDot")) {
             val count = lines.count { it.startsWith("private fun $name(") }
-            assertEquals("$name should still be declared exactly once", 1, count)
+            assertEquals("$name should no longer be declared", 0, count)
         }
+        assertFalse("LegacySettingsScreen must not reappear", sourceText.contains("LegacySettingsScreen"))
     }
 
     // ── Reachable orange must be zero ───────────────────────────────────────
@@ -95,13 +110,14 @@ class LiveSettingsTokensTest {
     }
 
     @Test
-    fun `legacy orange survives only inside the approved dead composables`() {
-        val orange = lines.mapIndexedNotNull { i, l -> if (l.contains("PocketOrange")) i + 1 else null }
-        val live = orange
-            .filterNot { isDead(it) }
-            .filterNot { lines[it - 1].trimStart().startsWith("import ") }
-        assertTrue("unexpected reachable orange at $live", live.isEmpty())
-        assertTrue("expected the dead composables to still hold orange", orange.any { isDead(it) })
+    fun `the file contains no PocketOrange reference at all`() {
+        // With the dead composables removed there is nothing left to hold the accent,
+        // so even the import is gone.
+        assertFalse(
+            "PocketOrange must be fully absent from Settings",
+            sourceText.contains("PocketOrange"),
+        )
+        assertTrue("no dead ranges should remain", deadRanges.isEmpty())
     }
 
     // ── Semantic colour roles ───────────────────────────────────────────────
