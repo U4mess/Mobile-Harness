@@ -43,22 +43,32 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # The runner image already ships the Android command line tools, so
       # android-actions/setup-android is deliberately not used: its own
       # `sdkmanager tools` call fails on cmdline-tools 16.0 ("Failed to find
-      # package 'tools'") and aborts the job before anything is built.
+      # package 'tools'") and aborts the job. The runner image already ships
+      # the command line tools; it just does not put them on PATH.
       - name: Install Android SDK, NDK and CMake
         run: |
           set -eu
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          CMDLINE_TOOLS="$(find "$SDK_ROOT/cmdline-tools" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -n 1)"
+          echo "SDK root: $SDK_ROOT"
+          echo "cmdline-tools: $CMDLINE_TOOLS"
           # SIGPIPE from `yes` when sdkmanager stops reading is expected.
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager --install \
+          yes | "$CMDLINE_TOOLS/bin/sdkmanager" --sdk_root="$SDK_ROOT" --licenses > /dev/null || true
+          "$CMDLINE_TOOLS/bin/sdkmanager" --sdk_root="$SDK_ROOT" --install \
             "platforms:${SDK_PLATFORM}" \
             "build-tools:${SDK_BUILD_TOOLS}" \
             "platform-tools" \
             "ndk:${SDK_NDK}" \
             "cmake:${SDK_CMAKE}"
-          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${SDK_NDK}" >> "$GITHUB_ENV"
+          {
+            echo "ANDROID_SDK_ROOT=$SDK_ROOT"
+            echo "ANDROID_HOME=$SDK_ROOT"
+            echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/${SDK_NDK}"
+            echo "$CMDLINE_TOOLS/bin"
+          } >> "$GITHUB_PATH"
+          echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/${SDK_NDK}" >> "$GITHUB_ENV"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
