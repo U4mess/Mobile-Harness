@@ -87,8 +87,26 @@ jobs:
           fi
           mkdir -p "$HOME/.android"
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$HOME/.android/debug.keystore"
-          keytool -list -keystore "$HOME/.android/debug.keystore" \
-            -storepass android -alias androiddebugkey | tail -n 3
+          keytool -list -v -keystore "$HOME/.android/debug.keystore" \
+            -storepass android -alias androiddebugkey \
+            > "$RUNNER_TEMP/restored-keytool.txt"
+          grep -E "Alias name|Valid from|SHA256:" "$RUNNER_TEMP/restored-keytool.txt"
+
+      # Diagnostic only: report where Android looks for its user home and which
+      # keystore AGP signs the onlineDebug variant with. The resolved Store path
+      # is authoritative. Prints selected non-secret paths and public
+      # certificate data only.
+      - name: Report debug signing configuration
+        run: |
+          set -eu
+          echo "== Android user home paths =="
+          echo "HOME=$HOME"
+          echo "ANDROID_USER_HOME=${ANDROID_USER_HOME:-<unset>}"
+          echo "ANDROID_SDK_HOME=${ANDROID_SDK_HOME:-<unset>}"
+          echo "ANDROID_PREFS_ROOT=${ANDROID_PREFS_ROOT:-<unset>}"
+          echo "GRADLE_USER_HOME=${GRADLE_USER_HOME:-<unset>}"
+          echo "== AGP signing report (authoritative Store path) =="
+          ./gradlew --no-daemon :app:signingReport
 
       # Unit tests first: no APK is packaged if they fail.
       - name: Unit tests
