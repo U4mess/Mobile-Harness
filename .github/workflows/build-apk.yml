@@ -85,9 +85,18 @@ jobs:
             echo "::error::Secret MH_DEBUG_KEYSTORE_BASE64 is not set; the APK would be signed with a throwaway key."
             exit 1
           fi
-          mkdir -p "$HOME/.android"
-          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$HOME/.android/debug.keystore"
-          keytool -list -v -keystore "$HOME/.android/debug.keystore" \
+          STORE="$HOME/.android/debug.keystore"
+          # AGP resolves the debug keystore to ~/.config/.android on this image
+          # (see :app:signingReport), so both paths get the same file.
+          STORE_CONFIG="$HOME/.config/.android/debug.keystore"
+          mkdir -p "$HOME/.android" "$HOME/.config/.android"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$STORE"
+          cp "$STORE" "$STORE_CONFIG"
+          chmod 600 "$STORE" "$STORE_CONFIG"
+          echo "keystore: $STORE"
+          echo "keystore: $STORE_CONFIG"
+          export LC_ALL=C LANG=C
+          keytool -list -v -keystore "$STORE" \
             -storepass android -alias androiddebugkey \
             > "$RUNNER_TEMP/restored-keytool.txt"
           grep -E "Alias name|Valid from|SHA256:" "$RUNNER_TEMP/restored-keytool.txt"
@@ -114,6 +123,49 @@ jobs:
 
       - name: Assemble online debug APK
         run: ./gradlew --no-daemon :app:assembleOnlineDebug
+
+      # Gate: the packaged APK must carry the restored keystore's certificate,
+      # otherwise the phone would reject the update. Public fingerprints only;
+      # no key material is printed.
+      - name: Verify APK signature matches the restored keystore
+        run: |
+          set -euo pipefail
+          export LC_ALL=C LANG=C
+          APK="app/build/outputs/apk/online/debug/app-online-debug.apk"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          APKSIGNER="$SDK_ROOT/build-tools/$SDK_BUILD_TOOLS/apksigner"
+          if [ ! -f "$APK" ]; then
+            echo "::error::Expected APK not found at $APK"
+            exit 1
+          fi
+          if [ ! -x "$APKSIGNER" ]; then
+            echo "::error::apksigner not found or not executable at $APKSIGNER"
+            exit 1
+          fi
+          echo "apksigner: $APKSIGNER"
+          "$APKSIGNER" verify --print-certs "$APK" > "$RUNNER_TEMP/apk-certs.txt"
+          cat "$RUNNER_TEMP/apk-certs.txt"
+          APK_SHA="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/apk-certs.txt" \
+            | tr -d ':' | tr 'A-Z' 'a-z')"
+          KS_SHA="$(sed -n 's/^[[:space:]]*SHA256: //p' "$RUNNER_TEMP/restored-keytool.txt" \
+            | tr -d ':' | tr 'A-Z' 'a-z')"
+          echo "APK signing certificate SHA-256 : $APK_SHA"
+          echo "Restored keystore certificate   : $KS_SHA"
+          case "$APK_SHA" in
+            *[!0-9a-f]*|"") echo "::error::APK certificate fingerprint is not 64 hex characters."; exit 1 ;;
+          esac
+          case "$KS_SHA" in
+            *[!0-9a-f]*|"") echo "::error::Keystore certificate fingerprint is not 64 hex characters."; exit 1 ;;
+          esac
+          if [ "${#APK_SHA}" -ne 64 ] || [ "${#KS_SHA}" -ne 64 ]; then
+            echo "::error::Fingerprints must each be exactly 64 hex characters."
+            exit 1
+          fi
+          if [ "$APK_SHA" != "$KS_SHA" ]; then
+            echo "::error::APK signature does not match the restored keystore; refusing to upload."
+            exit 1
+          fi
+          echo "APK signature matches the restored keystore."
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
