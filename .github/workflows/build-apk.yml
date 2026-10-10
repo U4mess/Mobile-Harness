@@ -43,9 +43,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # The runner image already ships the Android command line tools, so
+      # android-actions/setup-android is deliberately not used: its own
+      # `sdkmanager tools` call fails on cmdline-tools 16.0 ("Failed to find
+      # package 'tools'") and aborts the job before anything is built.
       - name: Install Android SDK, NDK and CMake
         run: |
           set -eu
