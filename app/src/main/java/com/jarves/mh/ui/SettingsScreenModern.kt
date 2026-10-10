@@ -30,6 +30,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -56,6 +57,9 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -87,7 +91,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jarves.mh.BuildConfig
@@ -105,10 +111,53 @@ import com.jarves.mh.network.DiscoveredModel
 import com.jarves.mh.network.ModelDiscoveryResult
 import com.jarves.mh.runtime.AntigravityAuthStatus
 import com.jarves.mh.ui.theme.AppThemeMode
+import com.jarves.mh.ui.theme.PocketSizeTokens
+import com.jarves.mh.ui.theme.PocketTheme
+import com.jarves.mh.ui.theme.PocketSpacingTokens
 import com.jarves.mh.ui.theme.PocketOrange
 import kotlinx.coroutines.launch
 
 private enum class SettingsSection { APPEARANCE, TOOLS, RUNTIME, UPDATE_CHANNEL }
+
+/**
+ * Settings presentation policy.
+ *
+ * The rules live here as plain values so they can be asserted directly in a unit test
+ * rather than restated there. Colours are resolved by the caller from `MaterialTheme` /
+ * `PocketTheme`, because those accessors are `@Composable`.
+ */
+internal object SettingsPresentation {
+
+    /**
+     * Bottom clearance for the settings list so the last row scrolls fully above the
+     * bottom navigation: the comfortable control height plus one spacing step.
+     * Settings-specific, so it is derived from existing tokens rather than added to them.
+     */
+    fun listBottomClearance(controlHeight: Dp, gap: Dp): Dp = controlHeight + gap
+
+    /** Collapsed subtitles. The update channel must never imply an available channel. */
+    const val UPDATE_CHANNEL_DORMANT = "Not configured in this build"
+    const val UPDATE_CHANNEL_OVERRIDDEN = "Overridden · debug only"
+
+    /** Trailing action/state a toolchain row shows, in precedence order. */
+    enum class ToolchainState { REMOVING, INSTALLING, INCLUDED, INSTALLED, AVAILABLE }
+
+    fun toolchainState(
+        installed: Boolean,
+        installing: Boolean,
+        removing: Boolean,
+        isCore: Boolean,
+    ): ToolchainState = when {
+        removing -> ToolchainState.REMOVING
+        installing -> ToolchainState.INSTALLING
+        !installed -> ToolchainState.AVAILABLE
+        isCore -> ToolchainState.INCLUDED
+        else -> ToolchainState.INSTALLED
+    }
+
+    /** Toolchain descriptions wrap to two lines before ellipsising. */
+    const val TOOLCHAIN_DESCRIPTION_MAX_LINES = 2
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -181,12 +230,12 @@ fun SettingsScreen(
                                 .size(32.dp)
                                 .background(
                                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                    shape = RoundedCornerShape(9.dp),
+                                    shape = MaterialTheme.shapes.small,
                                 )
                                 .border(
                                     width = 1.dp,
                                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
-                                    shape = RoundedCornerShape(9.dp),
+                                    shape = MaterialTheme.shapes.small,
                                 ),
                             contentAlignment = Alignment.Center,
                         ) {
@@ -200,7 +249,7 @@ fun SettingsScreen(
                         Spacer(Modifier.width(10.dp))
                         Column {
                             Text("Settings", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
-                            Text("Preferences & Configuration", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Preferences & Configuration", style = PocketTheme.typography.metadata, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 },
@@ -210,8 +259,17 @@ fun SettingsScreen(
     ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding).imePadding(),
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(
+                start = PocketTheme.spacing.space16,
+                end = PocketTheme.spacing.space16,
+                top = PocketTheme.spacing.space12,
+                // Keeps the final row clear of the bottom navigation.
+                bottom = SettingsPresentation.listBottomClearance(
+                    controlHeight = PocketSizeTokens.comfortableControlHeight,
+                    gap = PocketSpacingTokens.space16,
+                ),
+            ),
+            verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space12),
         ) {
 
             item {
@@ -239,74 +297,114 @@ fun SettingsScreen(
                     expanded = expanded == SettingsSection.TOOLS,
                     onClick = { toggle(SettingsSection.TOOLS) },
                 ) {
-                    Text("Node.js, npm, Git, and Claude Code are included.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(8.dp))
+                    Text("Node.js, npm, Git, and Claude Code are included.", style = PocketTheme.typography.supporting, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(PocketTheme.spacing.space8))
                     DevStack.entries.forEachIndexed { index, stack ->
                         val installed = stack in state.installedDevStacks
                         val installing = state.devStackInstalling == stack
                         val removing = installing && state.devStackRemoving
-                        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val rowState = SettingsPresentation.toolchainState(
+                            installed = installed,
+                            installing = installing,
+                            removing = removing,
+                            isCore = stack == DevStack.WEB,
+                        )
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget)
+                                .padding(vertical = PocketTheme.spacing.space8),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             Column(Modifier.weight(1f)) {
-                                Text(stack.label, fontWeight = FontWeight.SemiBold)
-                                Text(stack.installsSummary, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(stack.label, style = PocketTheme.typography.rowTitle, color = MaterialTheme.colorScheme.onSurface)
+                                Text(
+                                    stack.installsSummary,
+                                    style = PocketTheme.typography.supporting,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = SettingsPresentation.TOOLCHAIN_DESCRIPTION_MAX_LINES,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
-                            when {
-                                removing -> Text("Removing…", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                installing -> Text("${(state.devStackProgress * 100).toInt()}%", color = PocketOrange, fontWeight = FontWeight.Bold)
-                                installed && stack == DevStack.WEB -> Text("Included", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                installed -> TextButton(
-                                    onClick = { stackPendingRemoval = stack },
-                                    enabled = state.devStackInstalling == null,
-                                ) { Text("Remove", color = MaterialTheme.colorScheme.error) }
-                                else -> OutlinedButton(onClick = { onInstallDevStack(stack) }, enabled = state.devStackInstalling == null) { Text("Add") }
+                            Spacer(Modifier.width(PocketTheme.spacing.space8))
+                            when (rowState) {
+                                SettingsPresentation.ToolchainState.REMOVING ->
+                                    Text("Removing…", style = PocketTheme.typography.metadata, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                SettingsPresentation.ToolchainState.INSTALLING ->
+                                    Text(
+                                        "${(state.devStackProgress * 100).toInt()}%",
+                                        style = PocketTheme.typography.buttonLabel,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                SettingsPresentation.ToolchainState.INCLUDED ->
+                                    Text("Included", style = PocketTheme.typography.metadata, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                SettingsPresentation.ToolchainState.INSTALLED -> Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = PocketTheme.colors.success,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Spacer(Modifier.width(PocketTheme.spacing.space4))
+                                    Text(
+                                        "Installed",
+                                        style = PocketTheme.typography.metadata,
+                                        color = PocketTheme.colors.success,
+                                    )
+                                    Spacer(Modifier.width(PocketTheme.spacing.space8))
+                                    TextButton(
+                                        onClick = { stackPendingRemoval = stack },
+                                        enabled = state.devStackInstalling == null,
+                                    ) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+                                }
+                                SettingsPresentation.ToolchainState.AVAILABLE ->
+                                    OutlinedButton(
+                                        onClick = { onInstallDevStack(stack) },
+                                        enabled = state.devStackInstalling == null,
+                                    ) { Text("Add") }
                             }
                         }
                         if (installing) {
-                            Spacer(Modifier.height(4.dp))
+                            Spacer(Modifier.height(PocketTheme.spacing.space4))
                             LinearProgressIndicator(
                                 progress = { state.devStackProgress.coerceIn(0f, 1f) },
                                 modifier = Modifier.fillMaxWidth().height(7.dp),
-                                color = PocketOrange,
+                                color = MaterialTheme.colorScheme.primary,
                                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
                             )
-                            Spacer(Modifier.height(9.dp))
+                            Spacer(Modifier.height(PocketTheme.spacing.space4))
                             state.devStackBytes?.let { (downloaded, total) ->
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                                ) {
-                                    Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Column(verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space4)) {
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text(
+                                            "${formatTransferMb(downloaded)} of ${formatTransferMb(total)}",
+                                            style = PocketTheme.typography.metadata,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                        state.devStackBytesPerSecond?.takeIf { it > 0L }?.let { speed ->
                                             Text(
-                                                "${formatTransferMb(downloaded)} of ${formatTransferMb(total)}",
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.SemiBold,
+                                                "${formatTransferSpeed(speed)} · ${formatTransferEta(downloaded, total, speed)} left",
+                                                style = PocketTheme.typography.metadata,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 fontFamily = FontFamily.Monospace,
                                             )
-                                            state.devStackBytesPerSecond?.takeIf { it > 0L }?.let { speed ->
-                                                Text(
-                                                    "${formatTransferSpeed(speed)} · ${formatTransferEta(downloaded, total, speed)} left",
-                                                    fontSize = 11.sp,
-                                                    color = PocketOrange,
-                                                    fontFamily = FontFamily.Monospace,
-                                                )
-                                            }
                                         }
-                                        Text(
-                                            state.devStackMessage ?: "Downloading…",
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
                                     }
+                                    Text(
+                                        state.devStackMessage ?: "Downloading…",
+                                        style = PocketTheme.typography.metadata,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
                                 }
                             } ?: Text(
                                 state.devStackMessage ?: "Processing…",
-                                fontSize = 11.sp,
+                                style = PocketTheme.typography.metadata,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
@@ -332,8 +430,7 @@ fun SettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     Text(
                         "Installed agents",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        style = PocketTheme.typography.metadata,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     if (state.installedAgentVersions.isEmpty()) {
@@ -361,10 +458,10 @@ fun SettingsScreen(
                         Text("Advanced runtime reliability")
                     }
                     AnimatedVisibility(showReliabilityHelp) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space8)) {
                             Text(
                                 "If large builds stop unexpectedly, Android Developer options may provide a child-process restriction toggle.",
-                                fontSize = 12.sp,
+                                style = PocketTheme.typography.supporting,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Button(
@@ -392,16 +489,30 @@ fun SettingsScreen(
             item {
                 Surface(
                     color = Color.Transparent,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Settings, null, Modifier.size(20.dp), tint = PocketOrange)
-                        Spacer(Modifier.width(12.dp))
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Default.Settings, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(PocketTheme.spacing.space12))
                         Column(Modifier.weight(1f)) {
-                            Text(stringResource(R.string.app_name), fontWeight = FontWeight.SemiBold)
-                            Text(stringResource(R.string.app_branded_by), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.app_name), style = PocketTheme.typography.rowTitle, color = MaterialTheme.colorScheme.onSurface)
+                            Text(
+                                stringResource(R.string.app_branded_by),
+                                style = PocketTheme.typography.supporting,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
-                        Text("v${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(PocketTheme.spacing.space8))
+                        Text(
+                            "v${BuildConfig.VERSION_NAME}",
+                            style = PocketTheme.typography.metadata,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
                 Row(
@@ -414,7 +525,8 @@ fun SettingsScreen(
                                 )
                             }
                         }
-                        .padding(vertical = 12.dp),
+                        .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget)
+                        .padding(vertical = PocketTheme.spacing.space8),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
@@ -423,12 +535,12 @@ fun SettingsScreen(
                         modifier = Modifier.size(20.dp),
                         tint = MaterialTheme.colorScheme.primary,
                     )
-                    Spacer(Modifier.width(12.dp))
+                    Spacer(Modifier.width(PocketTheme.spacing.space12))
                     Column(Modifier.weight(1f)) {
-                        Text("Privacy policy", fontWeight = FontWeight.Medium)
+                        Text("Privacy policy", style = PocketTheme.typography.rowTitle, color = MaterialTheme.colorScheme.onSurface)
                         Text(
                             "How local data and AI provider requests are handled",
-                            fontSize = 12.sp,
+                            style = PocketTheme.typography.supporting,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -443,7 +555,8 @@ fun SettingsScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { showCredits = true }
-                        .padding(vertical = 12.dp),
+                        .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget)
+                        .padding(vertical = PocketTheme.spacing.space8),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
@@ -452,12 +565,12 @@ fun SettingsScreen(
                         modifier = Modifier.size(20.dp),
                         tint = MaterialTheme.colorScheme.primary,
                     )
-                    Spacer(Modifier.width(12.dp))
+                    Spacer(Modifier.width(PocketTheme.spacing.space12))
                     Column(Modifier.weight(1f)) {
-                        Text(stringResource(R.string.credits_title), fontWeight = FontWeight.Medium)
+                        Text(stringResource(R.string.credits_title), style = PocketTheme.typography.rowTitle, color = MaterialTheme.colorScheme.onSurface)
                         Text(
                             stringResource(R.string.credits_based_on),
-                            fontSize = 12.sp,
+                            style = PocketTheme.typography.supporting,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -468,7 +581,6 @@ fun SettingsScreen(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Spacer(Modifier.height(18.dp))
             }
         }
     }
@@ -501,23 +613,37 @@ private fun SettingsAccordion(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
+        shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column {
             Row(
-                Modifier.fillMaxWidth().clickable(onClick = onClick).padding(16.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onClick)
+                    .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget)
+                    .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
+                    .padding(horizontal = PocketTheme.spacing.space12, vertical = PocketTheme.spacing.space8),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Surface(shape = RoundedCornerShape(11.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f), modifier = Modifier.size(40.dp)) {
-                    Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary) }
+                Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(32.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(icon, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
                 }
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(PocketTheme.spacing.space12))
                 Column(Modifier.weight(1f)) {
-                    Text(title, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                    Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(title, style = PocketTheme.typography.rowTitle, color = MaterialTheme.colorScheme.onSurface)
+                    Text(
+                        subtitle,
+                        style = PocketTheme.typography.supporting,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
+                Spacer(Modifier.width(PocketTheme.spacing.space8))
                 Icon(
                     if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                     if (expanded) "Collapse" else "Expand",
@@ -527,7 +653,10 @@ private fun SettingsAccordion(
             AnimatedVisibility(expanded) {
                 Column {
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
+                    Column(
+                        Modifier.padding(PocketTheme.spacing.space12),
+                        verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space8),
+                    ) { content() }
                 }
             }
         }
@@ -877,15 +1006,33 @@ private fun SelectionDot(selected: Boolean) {
 @Composable
 private fun ModernThemeChoice(title: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
-        modifier = modifier.clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        color = if (selected) PocketOrange.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) PocketOrange else MaterialTheme.colorScheme.outlineVariant),
+        modifier = modifier
+            .clickable(onClick = onClick)
+            .defaultMinSize(minHeight = PocketTheme.sizes.comfortableControlHeight),
+        shape = MaterialTheme.shapes.small,
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(
+            if (selected) 1.5.dp else 1.dp,
+            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        ),
     ) {
-        Column(Modifier.padding(vertical = 13.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, title, Modifier.size(20.dp), tint = if (selected) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(5.dp))
-            Text(title, fontSize = 12.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+        Column(
+            Modifier.padding(vertical = PocketTheme.spacing.space12, horizontal = PocketTheme.spacing.space8),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                Modifier.size(20.dp),
+                tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(PocketTheme.spacing.space4))
+            Text(
+                title,
+                style = PocketTheme.typography.buttonLabel,
+                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }
@@ -893,8 +1040,8 @@ private fun ModernThemeChoice(title: String, icon: ImageVector, selected: Boolea
 @Composable
 private fun RuntimeInfoRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-        Text(value, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+        Text(label, Modifier.weight(1f), style = PocketTheme.typography.supporting, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = PocketTheme.typography.rowTitle, color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.End)
     }
 }
 
@@ -909,17 +1056,26 @@ private fun DebugUpdateChannelSection(
     val isOverridden = initialUrl.isNotBlank()
     SettingsAccordion(
         title = "Update channel",
-        subtitle = if (isOverridden) "Overridden · debug only" else "Default GitHub release",
+        subtitle = if (isOverridden) {
+            SettingsPresentation.UPDATE_CHANNEL_OVERRIDDEN
+        } else {
+            SettingsPresentation.UPDATE_CHANNEL_DORMANT
+        },
         icon = Icons.Default.Tune,
         expanded = expanded,
         onClick = { expanded = !expanded },
     ) {
         Text(
-            "Debug builds only. Paste the temporary manifest URL from Cloudflare Tunnel, ngrok, or any HTTPS server hosting mobile-harness-update.json and a newer APK.",
-            fontSize = 12.sp,
+            "Automatic PocketForge updates are not configured for this build. Verified CI APKs are installed manually for now.",
+            style = PocketTheme.typography.supporting,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.height(8.dp))
+        Text(
+            "The field below is a developer-only test override for this debug build. The upstream Mobile Harness release channel is not a PocketForge update channel.",
+            style = PocketTheme.typography.metadata,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(PocketTheme.spacing.space8))
         OutlinedTextField(
             value = url,
             onValueChange = { url = it },
@@ -929,31 +1085,30 @@ private fun DebugUpdateChannelSection(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
             modifier = Modifier.fillMaxWidth(),
         )
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(PocketTheme.spacing.space8))
         Row(
             Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space8),
         ) {
             Button(
                 onClick = { onSave(url) },
                 enabled = url.startsWith("https://"),
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).defaultMinSize(minHeight = PocketTheme.sizes.standardControlHeight),
             ) {
                 Text(if (isOverridden) "Replace" else "Use & check")
             }
             OutlinedButton(
                 onClick = onClear,
                 enabled = isOverridden,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).defaultMinSize(minHeight = PocketTheme.sizes.standardControlHeight),
             ) {
                 Text("Reset")
             }
         }
         if (isOverridden) {
-            Spacer(Modifier.height(6.dp))
             Text(
                 "Current: $initialUrl",
-                fontSize = 11.sp,
+                style = PocketTheme.typography.metadata,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
