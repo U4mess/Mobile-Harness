@@ -205,5 +205,11 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250107")
     debugImplementation("androidx.compose.ui:ui-tooling")
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
+}
+
+// The manifest exposure check reads AGP's merged Online Debug manifest. Make the
+// dependency explicit so the fail-closed test can never run without it, and so the
+// requirement is visible here rather than implied by AGP's artifact wiring.
+tasks.matching { it.name == "testOnlineDebugUnitTest" }.configureEach {
+    dependsOn("processOnlineDebugMainManifest")
 }

@@ -125,7 +125,13 @@ class DshRuntimeBridge(
             val guestWorkspacePath = "/workspace/$projectSlug"
             val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath, projectKind)
             val command = listOf("/usr/local/bin/dsh", "--profile", "sdk")
-            Log.d("DshBridge", "Route: ${route.name}, Model: ${provider.model}")
+            // Provider model identifier is not logged; the closed stage carries the
+            // diagnostic value without exposing a model or endpoint.
+            AgentDiagnostics.production.event(
+                DiagnosticOperation.SESSION,
+                DiagnosticAgent.DSH,
+                DiagnosticStage.LAUNCH_PREPARED,
+            )
             val process = installer.process(
                 installed.proot,
                 installed.rootfs,
@@ -152,7 +158,12 @@ class DshRuntimeBridge(
             Log.d("DshBridge", "SDK process exited with code $exit")
             val changed = checkpoints.changedFiles(workspace, before)
             if (changed.isNotEmpty()) {
-                Log.d("DshBridge", "Changed files: $changed")
+                AgentDiagnostics.production.event(
+                    DiagnosticOperation.SESSION,
+                    DiagnosticAgent.DSH,
+                    DiagnosticStage.CHANGED,
+                    pathCount = changed.size,
+                )
                 checkpoints.saveChangedPaths(projectId, changed)
                 val details = checkpoints.buildChangeDetails(projectId, workspace, checkpoints.readChangedPaths(projectId))
                 eventBus.emit(RuntimeEvent.FilesChanged(sessionId, details))
@@ -171,7 +182,13 @@ class DshRuntimeBridge(
                 error(sdkResult.failure.ifBlank { "DeepSeek Harness stopped with exit code $exit" })
             }
         }.onFailure { error ->
-            Log.e("DshBridge", "Session failed", error)
+            AgentDiagnostics.production.event(
+                DiagnosticOperation.SESSION,
+                DiagnosticAgent.DSH,
+                DiagnosticStage.EXIT,
+                exitCode = 1,
+                category = AgentDiagnostics.errorCategory(error),
+            )
             val message = friendlyError(error)
             emitFailureOnce(sessionId, message)
             if (userStopRequested) {
@@ -632,7 +649,12 @@ class DshRuntimeBridge(
                     .putExtra(RuntimeExecutionService.EXTRA_DETAIL, detail),
             )
         }.onFailure { error ->
-            Log.w("DshBridge", "Could not post task result notification", error)
+            AgentDiagnostics.production.event(
+                DiagnosticOperation.NOTIFICATION,
+                DiagnosticAgent.DSH,
+                DiagnosticStage.NOTIFICATION_FAILED,
+                category = AgentDiagnostics.errorCategory(error),
+            )
             context.stopService(android.content.Intent(context, RuntimeExecutionService::class.java))
         }
     }
@@ -650,7 +672,7 @@ class DshRuntimeBridge(
         }
     }
 
-    private class DshSessionException(message: String) : IllegalStateException(message)
+    internal class DshSessionException(message: String) : IllegalStateException(message)
 
     companion object {
         const val DSH_HOME_GUEST_PATH = "/root/.dsh"

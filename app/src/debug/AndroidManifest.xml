@@ -1,0 +1,19 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Debug-only overlay. The Online Debug APK is the build installed on a phone,
+         so the exported androidx.compose.ui.tooling.PreviewActivity that ui-tooling
+         contributes must not be reachable by other apps. This removes the manifest
+         entry only: Compose preview rendering and IDE inspection still work, because
+         ui-tooling itself is retained.
+
+         ui-test-manifest was removed as a dependency instead of being masked here:
+         it exists solely to give createComposeRule an activity in Android UI tests,
+         and this project has no androidTest sources. Its exported bare
+         androidx.activity.ComponentActivity therefore disappears with it, which is
+         why there is no entry for it below. -->
+    <application>
+        <activity
+            android:name="androidx.compose.ui.tooling.PreviewActivity"
+            tools:node="remove" />
+    </application>
+</manifest>

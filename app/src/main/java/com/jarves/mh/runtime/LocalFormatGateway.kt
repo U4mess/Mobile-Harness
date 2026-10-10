@@ -1,7 +1,6 @@
 package com.jarves.mh.runtime
 
 import com.jarves.mh.model.ProviderProfile
-import android.util.Log
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.net.HttpURLConnection
@@ -68,7 +67,13 @@ internal class LocalFormatGateway(
             val anthropic = JSONObject(bodyBytes.decodeToString())
             val upstream = callProvider(toOpenAi(anthropic))
             if (upstream.first !in 200..299) {
-                Log.w("FormatGateway", "Provider returned HTTP ${upstream.first}: ${providerError(upstream.second)}")
+                // Status code only: the upstream body can echo request content.
+                AgentDiagnostics.production.event(
+                    DiagnosticOperation.GATEWAY,
+                    DiagnosticAgent.GATEWAY,
+                    DiagnosticStage.UPSTREAM_STATUS,
+                    httpStatus = upstream.first,
+                )
                 writeJson(output, upstream.first, errorJson("api_error", providerError(upstream.second)))
             } else {
                 val translated = fromOpenAi(JSONObject(upstream.second), anthropic.optString("model", profile.model))

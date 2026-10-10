@@ -1,7 +1,6 @@
 package com.jarves.mh.runtime
 
 import android.content.Context
-import android.util.Log
 import androidx.core.content.ContextCompat
 import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.ChangeItem
@@ -153,8 +152,14 @@ class ClaudeRuntimeBridge(
                 authToken = secret,
                 localGatewayUrl = formatGateway?.url ?: openRouterGateway?.url,
             )
-            Log.d("ClaudeBridge", "Provider: ${provider.kind}, Model: ${provider.model}, BaseUrl: ${provider.baseUrl}")
-            Log.d("ClaudeBridge", "Launch environment keys: ${launch.environment.keys}")
+            // The endpoint, environment names and command values are never logged: the
+            // endpoint can carry credentials and the command carries the prompt and
+            // conversation history.
+            AgentDiagnostics.production.event(
+                DiagnosticOperation.SESSION,
+                DiagnosticAgent.CLAUDE,
+                DiagnosticStage.LAUNCH_PREPARED,
+            )
 
             // Build a context-aware prompt that includes conversation history
             val guestWorkspacePath = "/workspace/$projectSlug"
@@ -174,7 +179,13 @@ class ClaudeRuntimeBridge(
                 add("--max-turns")
                 add("25")
             }
-            Log.d("ClaudeBridge", "Launching command: $command")
+            // Argument count only; the values include the prompt and history.
+            AgentDiagnostics.production.event(
+                DiagnosticOperation.SESSION,
+                DiagnosticAgent.CLAUDE,
+                DiagnosticStage.COMMAND_BUILT,
+                argumentCount = command.size,
+            )
             val process = installer.process(
                 installed.proot,
                 installed.rootfs,
@@ -211,7 +222,6 @@ class ClaudeRuntimeBridge(
                             val line = pendingOutput.substring(0, newline).trimEnd('\r')
                             pendingOutput.delete(0, newline + 1)
                             if (line.isNotBlank()) {
-                                Log.d("ClaudeBridge", "OUTPUT: $line")
                                 ProviderRuntimeErrorDetector.detect(line)?.let { reason ->
                                     process.destroyForcibly()
                                     throw ProviderSessionException(reason)
@@ -228,11 +238,17 @@ class ClaudeRuntimeBridge(
                     }
                 }
                 pendingOutput.toString().trim().takeIf(String::isNotBlank)?.let { line ->
-                    Log.d("ClaudeBridge", "TRAILING OUTPUT: $line")
                     if (!consumeClaudeEvent(sessionId, line)) lastDiagnostic = line.takeLast(500)
                 }
                 val exit = process.waitFor()
-                Log.d("ClaudeBridge", "Process exited with code $exit")
+                AgentDiagnostics.production.event(
+                    DiagnosticOperation.SESSION,
+                    DiagnosticAgent.CLAUDE,
+                    DiagnosticStage.EXIT,
+                    exitCode = exit,
+                    byteCount = outputOffset,
+                    cancelled = userStopRequested,
+                )
                 permissionWatcher.cancelAndJoin()
                 pending.values.filter { it.request.sessionId == sessionId }.forEach { permission ->
                     permission.response.writeText("deny")
@@ -240,7 +256,12 @@ class ClaudeRuntimeBridge(
                 }
                 val changed = changedFiles(workspace, before)
                 if (changed.isNotEmpty()) {
-                    Log.d("ClaudeBridge", "Changed files: $changed")
+                    AgentDiagnostics.production.event(
+                        DiagnosticOperation.SESSION,
+                        DiagnosticAgent.CLAUDE,
+                        DiagnosticStage.CHANGED,
+                        pathCount = changed.size,
+                    )
                     saveChangedPaths(projectId, changed)
                     val details = loadPendingChanges(projectId)
                     eventBus.emit(RuntimeEvent.FilesChanged(sessionId, details))
@@ -260,7 +281,13 @@ class ClaudeRuntimeBridge(
                 }
             }
         }.onFailure { error ->
-            Log.e("ClaudeBridge", "Session failed", error)
+            AgentDiagnostics.production.event(
+                DiagnosticOperation.SESSION,
+                DiagnosticAgent.CLAUDE,
+                DiagnosticStage.EXIT,
+                exitCode = 1,
+                category = AgentDiagnostics.errorCategory(error),
+            )
             val message = friendlyError(error)
             emitFailureOnce(sessionId, message)
             if (userStopRequested) {
@@ -389,7 +416,14 @@ class ClaudeRuntimeBridge(
                         .ifBlank { command.orEmpty() }
                         .ifBlank { "$toolName running in project" }
 
-                    Log.d("ClaudeBridge", "Auto-approving permission request $approvalId for $toolName ($paths)")
+                    // Tool name and paths are agent output: only the closed stage and a
+                    // path count are emitted.
+                    AgentDiagnostics.production.event(
+                        DiagnosticOperation.PERMISSION,
+                        DiagnosticAgent.CLAUDE,
+                        DiagnosticStage.AUTO_APPROVED,
+                        pathCount = paths.size,
+                    )
                     val response = File(file.parentFile, "$approvalId.response")
                     response.writeText("allow")
 
@@ -1014,7 +1048,12 @@ class ClaudeRuntimeBridge(
                     .putExtra(RuntimeExecutionService.EXTRA_DETAIL, detail),
             )
         }.onFailure { error ->
-            Log.w("ClaudeBridge", "Could not post task result notification", error)
+            AgentDiagnostics.production.event(
+                DiagnosticOperation.NOTIFICATION,
+                DiagnosticAgent.CLAUDE,
+                DiagnosticStage.NOTIFICATION_FAILED,
+                category = AgentDiagnostics.errorCategory(error),
+            )
             context.stopService(android.content.Intent(context, RuntimeExecutionService::class.java))
         }
     }
@@ -1033,7 +1072,7 @@ class ClaudeRuntimeBridge(
     }
 
     private data class PendingPermission(val request: ToolRequest, val response: File)
-    private class ProviderSessionException(message: String) : IllegalStateException(message)
+    internal class ProviderSessionException(message: String) : IllegalStateException(message)
 
     companion object {
         private const val MAX_DIFF_LINES = 2_000

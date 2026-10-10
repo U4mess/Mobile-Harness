@@ -1436,8 +1436,13 @@ class RuntimeInstaller(private val context: Context) {
             File(rootfs, "usr/bin/env").canExecute() &&
                 File(rootfs, "usr/bin/bash").canExecute() &&
                 File(rootfs, "lib/ld-linux-aarch64.so.1").exists()
-        }.onFailure {
-            android.util.Log.e("RuntimeInstaller", "Could not repair Linux compatibility links", it)
+        }.onFailure { error ->
+            AgentDiagnostics.production.event(
+                DiagnosticOperation.INSTALLER,
+                DiagnosticAgent.INSTALLER,
+                DiagnosticStage.REPAIR_FAILED,
+                category = AgentDiagnostics.errorCategory(error),
+            )
         }.getOrDefault(false)
     }
 
@@ -1458,7 +1463,12 @@ class RuntimeInstaller(private val context: Context) {
     private fun readProcessOutputSafely(file: File): String = runCatching {
         file.readTailText(MAX_PROCESS_OUTPUT_BYTES)
     }.getOrElse { error ->
-        android.util.Log.w("RuntimeInstaller", "Could not decode process output as UTF-8: ${error.message}")
+        AgentDiagnostics.production.event(
+            DiagnosticOperation.INSTALLER,
+            DiagnosticAgent.INSTALLER,
+            DiagnosticStage.REPAIR_FAILED,
+            category = AgentDiagnostics.errorCategory(error),
+        )
         ""
     }
 
@@ -1480,7 +1490,12 @@ class RuntimeInstaller(private val context: Context) {
                 }
             }
             .onFailure { error ->
-                android.util.Log.w("RuntimeInstaller", "DeepSeek Harness compatibility repair failed", error)
+                AgentDiagnostics.production.event(
+                    DiagnosticOperation.INSTALLER,
+                    DiagnosticAgent.INSTALLER,
+                    DiagnosticStage.REPAIR_FAILED,
+                    category = AgentDiagnostics.errorCategory(error),
+                )
             }
         onProgress(RuntimeInstallProgress("Private runtime is ready", 1f))
         return installed
