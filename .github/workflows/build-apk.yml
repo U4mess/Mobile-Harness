@@ -26,15 +26,22 @@ jobs:
     steps:
       - name: Guard target branch
         run: |
-          if [ "${{ github.ref_name }}" != "fix/oom-and-shared-folder" ]; then
-            echo "::error::Select 'fix/oom-and-shared-folder' when starting this workflow."
-            exit 1
-          fi
+          # Exact pattern matching: the stable integration branch, or a design
+          # branch with a non-empty name. Nothing else, including main.
+          case "${{ github.ref_name }}" in
+            fix/oom-and-shared-folder|design/?*) ;;
+            *)
+              echo "::error::Unsupported branch '${{ github.ref_name }}'."
+              echo "::error::Allowed branches: 'fix/oom-and-shared-folder' or a non-empty 'design/*' branch."
+              exit 1
+              ;;
+          esac
 
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
-          ref: fix/oom-and-shared-folder
+          # Build the branch selected for workflow_dispatch, not a pinned ref.
+          ref: ${{ github.ref_name }}
           submodules: recursive
 
       - name: Set up JDK 17
