@@ -28,6 +28,10 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -5538,7 +5542,7 @@ private fun EmptyState(icon: ImageVector, title: String, body: String) {
 @Composable
 private fun BrandMark(modifier: Modifier = Modifier, compact: Boolean = false) {
     val size = if (compact) 32.dp else 50.dp
-    val iconSize = if (compact) 17.dp else 24.dp
+    val markSize = if (compact) 24.dp else 40.dp
     val cornerRadius = if (compact) 9.dp else 14.dp
     val primary = MaterialTheme.colorScheme.primary
 
@@ -5556,11 +5560,14 @@ private fun BrandMark(modifier: Modifier = Modifier, compact: Boolean = false) {
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = Icons.Default.Terminal,
+        // Same artwork as the launcher icon (crop-only raster, aspect preserved).
+        Image(
+            painter = painterResource(R.drawable.pocketforge_icon),
             contentDescription = stringResource(R.string.app_name),
-            modifier = Modifier.size(iconSize),
-            tint = primary,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .size(markSize)
+                .clip(RoundedCornerShape(cornerRadius)),
         )
     }
 }

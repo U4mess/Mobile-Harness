@@ -1,4 +1,6 @@
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Both layers kept: solid navy plate, plus the approved artwork as the
+         foreground, uniformly scaled into the 66dp safe area. -->
     <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <foreground android:drawable="@drawable/pocketforge_foreground" />
 </adaptive-icon>
