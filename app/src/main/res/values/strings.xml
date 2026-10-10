@@ -1,3 +1,56 @@
 <resources>
-    <string name="app_name">Mobile Harness</string>
+    <!-- User-facing brand. The upstream project is credited separately in the
+         Credits screen (credits_based_on); its MIT notice ships verbatim in
+         assets/licenses/MOBILE-HARNESS-MIT.txt. -->
+    <string name="app_name">PocketForge</string>
+    <string name="app_branded_by">Customized by U4mess</string>
+
+    <string name="setup_resuming">Resuming %1$s setup</string>
+    <string name="setup_ready" formatted="false">%1$s is ready</string>
+    <string name="setup_could_not_finish">%1$s could not finish setup.</string>
+    <string name="setup_setting_up">Setting up %1$s</string>
+    <string name="setup_channel_name">%1$s setup</string>
+    <string name="setup_interrupted">Android interrupted Linux setup. %1$s will repair it when you try again.</string>
+    <string name="setup_could_not_start" formatted="false">%1$s couldn\'t finish starting</string>
+    <string name="setup_compatibility_note">%1$s checks compatibility before downloading the private Linux runtime.</string>
+    <string name="setup_handles_setup">Your phone meets the requirements. Choose your coding tools next and %1$s will handle the setup.</string>
+    <string name="setup_set_up_title">Set up %1$s</string>
+    <string name="setup_choose_access">Choose how %1$s should access your coding model.</string>
+    <string name="setup_translate_note">%1$s will translate Claude Code requests for this provider.</string>
+    <string name="setup_preparing_failed">Something went wrong while preparing %1$s. Please try again.</string>
+    <string name="setup_background_note">Allow %1$s to continue a task when you lock the phone or switch to another app.</string>
+    <string name="setup_background_running">Setup time depends on the toolchains you choose next. You may leave %1$s in the background while it works.</string>
+
+    <string name="task_working_title">%1$s is working</string>
+    <string name="task_finished">%1$s finished working in %2$s.</string>
+    <string name="task_failed">%1$s could not finish the task.</string>
+    <string name="task_channel_description">Shows progress while %1$s is working in the background</string>
+    <string name="task_ask_to_update">Ask %1$s to update your project.</string>
+    <string name="terminal_ready">%1$s Terminal ready.\nType a bash command below or tap a quick command chip above.</string>
+
+    <string name="update_available_title">%1$s %2$s</string>
+    <string name="update_notes_fallback">Get the latest improvements and fixes for %1$s.</string>
+    <string name="update_unknown_sources_hint" formatted="false">Allow \u2018Install unknown apps\u2019 for %1$s. Without this permission, Android will not install the update.</string>
+    <string name="update_package_mismatch">Update package name does not match %1$s</string>
+
+    <string name="credits_title" formatted="false">Credits &amp; licenses</string>
+    <string name="credits_based_on">Based on Mobile Harness by Tech Jarves</string>
+    <string name="credits_fork_source">PocketForge source code</string>
+    <string name="credits_original_source">Mobile Harness original project source code</string>
+    <string name="credits_open_license">Mobile Harness license (MIT)</string>
+    <string name="credits_third_party">Bundled third-party notices</string>
+    <string name="credits_loading">Loading notice…</string>
+    <string name="credits_load_failed">Could not load %1$s</string>
+    <string name="credits_close">Close</string>
+    <string name="credits_fork_url" translatable="false">https://github.com/U4mess/Mobile-Harness</string>
+    <string name="credits_original_url" translatable="false">https://github.com/techjarves/Mobile-Harness</string>
+    <string name="credits_license_asset" translatable="false">licenses/MOBILE-HARNESS-MIT.txt</string>
+    <string name="credits_notice_proot" translatable="false">proot — GPL-2.0</string>
+    <string name="credits_notice_talloc" translatable="false">talloc — LGPL-3.0-or-later</string>
+    <string name="credits_notice_shmem" translatable="false">libandroid-shmem — BSD-3-Clause</string>
+    <string name="credits_notice_claude" translatable="false">Claude Code Android — MIT</string>
+    <string name="credits_asset_proot" translatable="false">licenses/proot-GPL-2.0.txt</string>
+    <string name="credits_asset_talloc" translatable="false">licenses/talloc-LGPL-3.0-or-later.txt</string>
+    <string name="credits_asset_shmem" translatable="false">licenses/libandroid-shmem-BSD-3-Clause.txt</string>
+    <string name="credits_asset_claude" translatable="false">licenses/claude-code-android-MIT.txt</string>
 </resources>

@@ -1,6 +1,8 @@
 package com.jarves.mh.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.res.stringResource
+import com.jarves.mh.R
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -326,7 +328,7 @@ fun TerminalScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             if (lines.isEmpty()) {
                                 Text(
-                                    "Mobile Harness Terminal ready.\nType a bash command below or tap a quick command chip above.",
+                                    stringResource(R.string.terminal_ready, stringResource(R.string.app_name)),
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 12.sp,
                                     color = emptyStateColor,

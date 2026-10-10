@@ -16,6 +16,7 @@ import android.webkit.WebViewClient
 import android.webkit.WebChromeClient
 import android.widget.Toast
 import com.jarves.mh.BuildConfig
+import com.jarves.mh.R
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -208,6 +209,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.DiscoveredModel
@@ -538,7 +540,7 @@ private fun BackgroundTaskSetupScreen(
     }
     val currentDescription = when (currentStep) {
         0 -> "See live progress and receive an alert when Claude finishes or needs your attention."
-        1 -> "Allow Mobile Harness to continue a task when you lock the phone or switch to another app."
+        1 -> stringResource(R.string.setup_background_note, stringResource(R.string.app_name))
         else -> "Keep the CPU awake only while a visible coding task is running, then release it automatically."
     }
     val currentPrivacyNote = when (currentStep) {
@@ -560,7 +562,7 @@ private fun BackgroundTaskSetupScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         BrandMark(compact = true)
                         Spacer(Modifier.width(9.dp))
-                        Text("Mobile Harness", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.app_name), fontWeight = FontWeight.Bold)
                     }
                 },
                 actions = {
@@ -586,7 +588,7 @@ private fun BackgroundTaskSetupScreen(
             Text("Prepare for reliable setup", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Text(
-                "Setup time depends on the toolchains you choose next. You may leave Mobile Harness in the background while it works.",
+                stringResource(R.string.setup_background_running, stringResource(R.string.app_name)),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
@@ -833,7 +835,7 @@ private fun RuntimeSetupPromptScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         BrandMark(compact = true)
                         Spacer(Modifier.width(9.dp))
-                        Text("Mobile Harness", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.app_name), fontWeight = FontWeight.Bold)
                     }
                 },
                 navigationIcon = {
@@ -873,6 +875,13 @@ private fun RuntimeSetupPromptScreen(
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp,
                 )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = stringResource(R.string.app_branded_by),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    letterSpacing = 0.4.sp,
+                )
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = "Ready to build on this phone",
@@ -882,7 +891,7 @@ private fun RuntimeSetupPromptScreen(
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "Your phone meets the requirements. Choose your coding tools next and Mobile Harness will handle the setup.",
+                    text = stringResource(R.string.setup_handles_setup, stringResource(R.string.app_name)),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.5.sp,
                     lineHeight = 19.sp,
@@ -1174,6 +1183,7 @@ private fun RuntimeSetupPromptScreen(
             }
 
             Spacer(Modifier.height(28.dp))
+            CreditsFooterButton()
         }
     }
 }
@@ -1963,7 +1973,7 @@ private fun StartupErrorScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         BrandMark(compact = true)
                         Spacer(Modifier.width(9.dp))
-                        Text("Mobile Harness", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.app_name), fontWeight = FontWeight.Bold)
                     }
                 },
                 actions = {
@@ -1986,7 +1996,10 @@ private fun StartupErrorScreen(
             Icon(Icons.Default.Warning, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.error)
             Spacer(Modifier.height(20.dp))
             Text(
-                if (isOffline) "You're offline" else "Mobile Harness couldn't finish starting",
+                if (isOffline) "You're offline" else stringResource(
+                    R.string.setup_could_not_start,
+                    stringResource(R.string.app_name),
+                ),
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
@@ -2321,7 +2334,15 @@ private fun ProviderSetupScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (onboarding) "Set up Mobile Harness" else "AI Provider & Settings") },
+                title = {
+                    Text(
+                        if (onboarding) {
+                            stringResource(R.string.setup_set_up_title, stringResource(R.string.app_name))
+                        } else {
+                            "AI Provider & Settings"
+                        },
+                    )
+                },
                 navigationIcon = {
                     if (handleBack != null) {
                         IconButton(onClick = handleBack) {
@@ -2461,7 +2482,10 @@ private fun DeviceCheckStep(context: Context, onContinue: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
         BrandMark()
         Text("Your phone is the workspace", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("Mobile Harness checks compatibility before downloading the private Linux runtime.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            stringResource(R.string.setup_compatibility_note, stringResource(R.string.app_name)),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         CheckRow(Icons.Default.Memory, "Memory", "$totalRamLabel GB usable · ${if (totalRamGb >= 7.5) "Full mode" else "Lite mode"}", true)
         CheckRow(Icons.Default.Code, "Processor", Build.SUPPORTED_ABIS.firstOrNull() ?: "Unknown", arm64)
         CheckRow(Icons.Default.Storage, "Android", "Android ${Build.VERSION.RELEASE}", true)
@@ -2530,7 +2554,7 @@ private fun ProviderChoiceStep(
         Text("Connect your AI", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
-            "Choose how Mobile Harness should access your coding model.",
+            stringResource(R.string.setup_choose_access, stringResource(R.string.app_name)),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 13.sp,
         )
@@ -2867,7 +2891,10 @@ private fun ProviderCredentialsStep(
             Text(
                 when {
                     agentKind == AgentKind.DEEPSEEK_HARNESS -> "DeepSeek Harness will connect through this API endpoint."
-                    provider.protocol.name.startsWith("OPENAI") -> "Mobile Harness will translate Claude Code requests for this provider."
+                    provider.protocol.name.startsWith("OPENAI") -> stringResource(
+                        R.string.setup_translate_note,
+                        stringResource(R.string.app_name),
+                    )
                     else -> "Claude Code will connect through this API endpoint."
                 },
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -3132,7 +3159,7 @@ private fun ProjectsScreen(
         topBar = {
             TopAppBar(
                 modifier = Modifier.padding(top = 8.dp),
-                title = { Row(verticalAlignment = Alignment.CenterVertically) { BrandMark(compact = true); Spacer(Modifier.width(9.dp)); Text("Mobile Harness", fontWeight = FontWeight.Bold) } },
+                title = { Row(verticalAlignment = Alignment.CenterVertically) { BrandMark(compact = true); Spacer(Modifier.width(9.dp)); Text(stringResource(R.string.app_name), fontWeight = FontWeight.Bold) } },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
         },
@@ -3298,7 +3325,14 @@ private fun ProjectsScreen(
                             }
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("Mobile Harness ${update.versionName}", fontWeight = FontWeight.Bold)
+                                Text(
+                                    stringResource(
+                                        R.string.update_available_title,
+                                        stringResource(R.string.app_name),
+                                        update.versionName,
+                                    ),
+                                    fontWeight = FontWeight.Bold,
+                                )
                                 Text("A new update is ready", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Text("Update", color = PocketOrange, fontWeight = FontWeight.Bold, fontSize = 13.sp)
@@ -3525,20 +3559,28 @@ private fun ProjectsScreen(
         val total = state.appUpdateTotalBytes
         val downloaded = state.appUpdateDownloadedBytes
         val progress = if (total > 0) (downloaded.toFloat() / total).coerceIn(0f, 1f) else 0f
+        // Resolved during composition: ifBlank's lambda is not a composable scope.
+        val fallbackNotes = stringResource(R.string.update_notes_fallback, stringResource(R.string.app_name))
         AlertDialog(
             onDismissRequest = { if (!installing) showUpdateDialog = false },
             icon = { Icon(Icons.Default.Download, null, tint = PocketOrange, modifier = Modifier.size(34.dp)) },
             title = { Text("Update to ${update.versionName}", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(update.notes.ifBlank { "Get the latest improvements and fixes for Mobile Harness." })
+                    Text(update.notes.ifBlank { fallbackNotes })
                     if (update.sizeBytes > 0) Text("Download size: ${formatMegabytes(update.sizeBytes)}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                     if (!canInstall) {
                         Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.65f)) {
                             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
                                 Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
                                 Spacer(Modifier.width(8.dp))
-                                Text("Allow ‘Install unknown apps’ for Mobile Harness. Without this permission, Android will not install the update.", fontSize = 13.sp)
+                                Text(
+                                    stringResource(
+                                        R.string.update_unknown_sources_hint,
+                                        stringResource(R.string.app_name),
+                                    ),
+                                    fontSize = 13.sp,
+                                )
                             }
                         }
                     }
@@ -5228,7 +5270,12 @@ private fun ChangesTab(
                 }
             }
         }
-        if (changes.isEmpty()) item { EmptyState(Icons.Default.Code, "No changes yet", "Ask Mobile Harness to update your project.") }
+        if (changes.isEmpty()) {
+            item {
+                val askToUpdate = stringResource(R.string.task_ask_to_update, stringResource(R.string.app_name))
+                EmptyState(Icons.Default.Code, "No changes yet", askToUpdate)
+            }
+        }
         items(changes, key = { it.path }) { change ->
             val expanded = expandedPath == change.path
             Card(Modifier.fillMaxWidth()) {
@@ -5511,7 +5558,7 @@ private fun BrandMark(modifier: Modifier = Modifier, compact: Boolean = false) {
     ) {
         Icon(
             imageVector = Icons.Default.Terminal,
-            contentDescription = "Mobile Harness",
+            contentDescription = stringResource(R.string.app_name),
             modifier = Modifier.size(iconSize),
             tint = primary,
         )

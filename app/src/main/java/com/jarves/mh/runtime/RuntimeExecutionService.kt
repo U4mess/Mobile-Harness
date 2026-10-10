@@ -22,12 +22,14 @@ internal object RuntimeTaskController {
 class RuntimeExecutionService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var projectName: String = "your project"
-    private var notificationTitle: String = "Mobile Harness is working"
+    // Resolved from resources in onCreate, before any notification is built.
+    private var notificationTitle: String = ""
     private var canStop: Boolean = true
     private var taskRunning: Boolean = false
 
     override fun onCreate() {
         super.onCreate()
+        notificationTitle = getString(R.string.task_working_title, getString(R.string.app_name))
         ensureNotificationChannels(this)
     }
 
@@ -55,12 +57,14 @@ class RuntimeExecutionService : Service() {
             }
             ACTION_COMPLETE -> finishTask(
                 title = "Task completed",
-                detail = intent?.getStringExtra(EXTRA_DETAIL) ?: "Mobile Harness finished working in $projectName.",
+                detail = intent?.getStringExtra(EXTRA_DETAIL)
+                    ?: getString(R.string.task_finished, getString(R.string.app_name), projectName),
                 failed = false,
             )
             ACTION_FAILED -> finishTask(
                 title = "Task needs attention",
-                detail = intent?.getStringExtra(EXTRA_DETAIL) ?: "Mobile Harness could not finish the task.",
+                detail = intent?.getStringExtra(EXTRA_DETAIL)
+                    ?: getString(R.string.task_failed, getString(R.string.app_name)),
                 failed = true,
             )
             ACTION_CANCELLED -> {
@@ -171,7 +175,10 @@ class RuntimeExecutionService : Service() {
             val manager = context.getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(
                 NotificationChannel(RUNNING_CHANNEL_ID, "Running coding tasks", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Shows progress while Mobile Harness is working in the background"
+                    description = context.getString(
+                        R.string.task_channel_description,
+                        context.getString(R.string.app_name),
+                    )
                 },
             )
             manager.createNotificationChannel(

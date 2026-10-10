@@ -13,6 +13,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.jarves.mh.BuildConfig
+import com.jarves.mh.R
 import com.jarves.mh.data.ApiKeyVault
 import com.jarves.mh.data.ApiKeyInfo
 import com.jarves.mh.data.AppPreferences
@@ -1273,7 +1274,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val message = if (isOffline) {
             "Connect to Wi-Fi or mobile data, then try again. Internet is required to finish the first-time setup."
         } else {
-            error.message?.take(300) ?: "Something went wrong while preparing Mobile Harness. Please try again."
+            error.message?.take(300) ?: getApplication<Application>().getString(
+                R.string.setup_preparing_failed,
+                getApplication<Application>().getString(R.string.app_name),
+            )
         }
         _state.update {
             it.copy(
