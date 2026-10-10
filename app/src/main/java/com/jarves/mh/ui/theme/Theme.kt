@@ -3,62 +3,26 @@ package com.jarves.mh.ui.theme
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.SideEffect
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-val PocketOrange = Color(0xFFF28C52)
-val PocketBlue = Color(0xFF8EA8FF)
-val PocketGreen = Color(0xFF69D69E)
-val PocketBackground = Color(0xFF0B0E14)
-val PocketSurface = Color(0xFF131821)
-val PocketSurfaceVariant = Color(0xFF1B222D)
-val PocketOutline = Color(0xFF2A3240)
-
-private val DarkColors = darkColorScheme(
-    primary = PocketOrange,
-    onPrimary = Color(0xFF241107),
-    primaryContainer = Color(0xFF42281D),
-    onPrimaryContainer = Color(0xFFFFDDCC),
-    secondary = PocketBlue,
-    onSecondary = Color(0xFF001F58),
-    tertiary = PocketGreen,
-    onTertiary = Color(0xFF00391E),
-    background = PocketBackground,
-    onBackground = Color(0xFFE6EDF3),
-    surface = PocketSurface,
-    onSurface = Color(0xFFE6EDF3),
-    surfaceVariant = PocketSurfaceVariant,
-    onSurfaceVariant = Color(0xFF9AA0A6),
-    outline = PocketOutline,
-    outlineVariant = Color(0xFF333B4A),
-)
-
-private val LightColors = lightColorScheme(
-    primary = Color(0xFFD85A20),
-    onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFFFE0D2),
-    onPrimaryContainer = Color(0xFF451A08),
-    secondary = Color(0xFF3366CC),
-    onSecondary = Color(0xFFFFFFFF),
-    tertiary = Color(0xFF1B8A5A),
-    onTertiary = Color(0xFFFFFFFF),
-    background = Color(0xFFF6F8FA),
-    onBackground = Color(0xFF1F2328),
-    surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF1F2328),
-    surfaceVariant = Color(0xFFEAEFF5),
-    onSurfaceVariant = Color(0xFF57606A),
-    outline = Color(0xFFD0D7DE),
-    outlineVariant = Color(0xFFD8DEE4),
-)
-
 enum class AppThemeMode { SYSTEM, DARK, LIGHT }
 
+/**
+ * PocketForge Midnight Studio theme.
+ *
+ * Installs the explicit Material colour scheme (every role defined), the
+ * PocketForge type scale, real shapes, and the semantic/dimension token
+ * providers. The public entry point is unchanged:
+ *
+ * ```
+ * PocketTheme(themeMode = AppThemeMode.SYSTEM) { App() }
+ * ```
+ */
 @Composable
 fun PocketTheme(themeMode: AppThemeMode = AppThemeMode.SYSTEM, content: @Composable () -> Unit) {
     val isDark = when (themeMode) {
@@ -77,8 +41,43 @@ fun PocketTheme(themeMode: AppThemeMode = AppThemeMode.SYSTEM, content: @Composa
         }
     }
 
-    MaterialTheme(
-        colorScheme = if (isDark) DarkColors else LightColors,
-        content = content,
-    )
+    val pocketColors = if (isDark) PocketForgeDarkColors else PocketForgeLightColors
+
+    CompositionLocalProvider(
+        LocalPocketColors provides pocketColors,
+        LocalPocketSpacing provides PocketSpacingTokens,
+        LocalPocketRadii provides PocketRadiusTokens,
+        LocalPocketSizes provides PocketSizeTokens,
+    ) {
+        MaterialTheme(
+            colorScheme = if (isDark) PocketForgeDarkScheme else PocketForgeLightScheme,
+            typography = PocketTypography.material,
+            shapes = PocketShapes,
+            content = content,
+        )
+    }
+}
+
+/**
+ * Token accessors. `PocketTheme` is both this object and the composable above —
+ * Kotlin resolves the composable by call syntax and the object by member access,
+ * so both can share the name without conflict.
+ */
+object PocketTheme {
+    /** Semantic tokens Material has no role for. */
+    val colors: PocketColors
+        @Composable @ReadOnlyComposable get() = LocalPocketColors.current
+
+    /** Brand type roles; `MaterialTheme.typography` carries the mapped subset. */
+    val typography: PocketTypeScale
+        @Composable @ReadOnlyComposable get() = PocketTypography
+
+    val spacing: PocketSpacing
+        @Composable @ReadOnlyComposable get() = LocalPocketSpacing.current
+
+    val radii: PocketRadii
+        @Composable @ReadOnlyComposable get() = LocalPocketRadii.current
+
+    val sizes: PocketSizes
+        @Composable @ReadOnlyComposable get() = LocalPocketSizes.current
 }
