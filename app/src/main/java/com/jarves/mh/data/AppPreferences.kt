@@ -17,8 +17,34 @@ import org.json.JSONObject
 import java.io.File
 import java.time.Instant
 
+/**
+ * Outcome of reading the stored project registry.
+ *
+ * A missing, malformed or failed read is **not** an empty registry. Callers must be
+ * able to tell the difference, because only a successful read may be trusted and
+ * nothing derived from a failure may be written back or acted on destructively.
+ */
+internal sealed interface ProjectsLoad {
+    /** Well-formed array. May legitimately be empty. */
+    data class Loaded(val projects: List<Project>) : ProjectsLoad
+
+    /** No registry has ever been stored. */
+    data object Missing : ProjectsLoad
+
+    /** Stored value exists but is not parseable as a JSON array of projects. */
+    data object Malformed : ProjectsLoad
+
+    /** Reading the preference failed unexpectedly. */
+    data object Failed : ProjectsLoad
+}
+
 class AppPreferences(private val context: Context) {
     private val preferences = context.getSharedPreferences("pocket_preferences", Context.MODE_PRIVATE)
+
+    private companion object {
+        const val KEY_PROJECTS_JSON = "projects_json"
+        const val KEY_PROJECTS_BACKUP_JSON = "projects_json_backup"
+    }
 
     var onboardingComplete: Boolean
         get() = preferences.getBoolean("onboarding_complete", false)
@@ -232,7 +258,28 @@ class AppPreferences(private val context: Context) {
 
     private fun providerPrefix(agent: AgentKind): String = "provider_${agent.stableId.replace('-', '_')}_"
 
+    /**
+     * Replaces the project registry.
+     *
+     * The previous value is kept as a single bounded last-known-good backup, but only
+     * when it is a non-empty well-formed array — so an automatic or failed write can
+     * never displace a good backup. One previous copy is retained, never more.
+     */
     fun saveProjects(projects: List<Project>) {
+        val next = projectsJson(projects)
+        val previous = preferences.getString(KEY_PROJECTS_JSON, null)
+        if (ProjectLifecycle.isUsableBackup(previous)) {
+            // Commit the backup before the replacement so it is never a step behind.
+            preferences.edit().putString(KEY_PROJECTS_BACKUP_JSON, previous).commit()
+        }
+        preferences.edit().putString(KEY_PROJECTS_JSON, next).apply()
+    }
+
+    /** Last-known-good registry, for diagnostics and manual recovery. Read-only. */
+    fun projectsRegistryBackup(): String? =
+        preferences.getString(KEY_PROJECTS_BACKUP_JSON, null)
+
+    private fun projectsJson(projects: List<Project>): String {
         val arr = JSONArray()
         projects.forEach { p ->
             arr.put(JSONObject().apply {
@@ -246,11 +293,27 @@ class AppPreferences(private val context: Context) {
                 put("kind", p.kind.name)
             })
         }
-        preferences.edit().putString("projects_json", arr.toString()).apply()
+        return arr.toString()
     }
 
-    fun loadProjects(): List<Project> {
-        val raw = preferences.getString("projects_json", null) ?: return emptyList()
+    /** Outcome of reading the stored registry. See [ProjectsLoad]. */
+    fun loadProjects(): List<Project> = when (val result = loadProjectsResult()) {
+        is ProjectsLoad.Loaded -> result.projects
+        // Missing, malformed or failed reads yield no projects in memory. The stored
+        // value is left exactly as found: it is never replaced with an empty array.
+        ProjectsLoad.Missing, ProjectsLoad.Malformed, ProjectsLoad.Failed -> emptyList()
+    }
+
+    /**
+     * Loads the registry without treating a read failure as an empty registry.
+     *
+     * A malformed value is never rewritten — silently replacing unreadable data with
+     * `[]` is how a parse failure becomes permanent data loss.
+     */
+    internal fun loadProjectsResult(): ProjectsLoad {
+        val raw = preferences.getString(KEY_PROJECTS_JSON, null)
+            ?: return ProjectsLoad.Missing
+        val array = runCatching { JSONArray(raw) }.getOrElse { return ProjectsLoad.Malformed }
         var needsSave = false
         val list = runCatching {
             val arr = JSONArray(raw)
@@ -296,12 +359,14 @@ class AppPreferences(private val context: Context) {
                     },
                 )
             }
-        }.getOrDefault(emptyList())
+        }.getOrElse { return ProjectsLoad.Malformed }
 
+        // A readable, non-empty registry may be normalised in place; an unreadable one
+        // never is, and an empty list is never written back here.
         if (needsSave && list.isNotEmpty()) {
             saveProjects(list)
         }
-        return list
+        return ProjectsLoad.Loaded(list)
     }
 
     private val chatsDir = File(context.filesDir, "chats").also { it.mkdirs() }

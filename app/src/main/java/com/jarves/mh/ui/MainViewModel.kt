@@ -17,6 +17,10 @@ import com.jarves.mh.R
 import com.jarves.mh.data.ApiKeyVault
 import com.jarves.mh.data.ApiKeyInfo
 import com.jarves.mh.data.AppPreferences
+import com.jarves.mh.data.ProjectLifecycle
+import com.jarves.mh.data.ProjectLifecycleDiagnostics
+import com.jarves.mh.data.ProjectLifecycleEvent
+import com.jarves.mh.data.ProjectsLoad
 import com.jarves.mh.model.ActivityItem
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.ChangeItem
@@ -261,6 +265,7 @@ data class AppUiState(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val vault = ApiKeyVault(application)
     private val preferences = AppPreferences(application)
+    private val projectLifecycle = ProjectLifecycleDiagnostics.production
     private val claudeRuntime = ClaudeRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
     private val dshRuntime = DshRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
     private val installer = RuntimeInstaller(application)
@@ -393,29 +398,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(provider = testProvider) }
         }
 
-        val loadedProjects = preferences.loadProjects()
-        val cleanedProjects = loadedProjects.filter { project ->
-            if (project.kind == ProjectKind.QUICK_PROJECT) {
-                val chats = preferences.loadProjectChats(project.id)
-                val userMessages = chats.sumOf { preferences.loadMessages(project.id, it.id).count { m -> m.fromUser } }
-                val workspaceDir = File(application.filesDir, "workspaces/${project.id}")
-                val userFiles = if (workspaceDir.isDirectory) {
-                    if (workspaceDir.walkTopDown().any { file ->
-                        file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
-                    }) 1 else 0
-                } else 0
-                val keep = userMessages > 0 || userFiles > 0
-                if (!keep) {
-                    workspaceDir.deleteRecursively()
-                    terminalHistoryFile(project.id).delete()
-                    preferences.deleteProjectChats(project.id)
+        // The stored registry is authoritative and is exposed exactly as read. It is
+        // never filtered, trimmed or rewritten from a heuristic here: pruning a project
+        // because it currently has no visible messages or files destroyed workspaces and
+        // emptied the registry. Deletion happens only via the confirmed delete action.
+        when (val loaded = preferences.loadProjectsResult()) {
+            is ProjectsLoad.Loaded -> {
+                projectLifecycle.event(
+                    ProjectLifecycleEvent.PROJECTS_LOAD_SUCCESS,
+                    ProjectLifecycle.Trigger.STARTUP,
+                    count = loaded.projects.size,
+                )
+                if (loaded.projects.isNotEmpty()) {
+                    projectLifecycle.event(
+                        ProjectLifecycleEvent.PROJECT_PRESERVED_ON_STARTUP,
+                        ProjectLifecycle.Trigger.STARTUP,
+                        outcome = ProjectLifecycle.Outcome.PRESERVE,
+                        count = loaded.projects.size,
+                    )
                 }
-                keep
-            } else true
-        }
-        if (cleanedProjects.size != loadedProjects.size) {
-            preferences.saveProjects(cleanedProjects)
-            _state.update { it.copy(projects = cleanedProjects) }
+            }
+            ProjectsLoad.Missing -> projectLifecycle.event(
+                ProjectLifecycleEvent.PROJECTS_LOAD_MISSING,
+                ProjectLifecycle.Trigger.STARTUP,
+            )
+            ProjectsLoad.Malformed -> projectLifecycle.event(
+                ProjectLifecycleEvent.PROJECTS_LOAD_MALFORMED,
+                ProjectLifecycle.Trigger.STARTUP,
+            )
+            ProjectsLoad.Failed -> projectLifecycle.event(
+                ProjectLifecycleEvent.PROJECTS_LOAD_FAILED,
+                ProjectLifecycle.Trigger.STARTUP,
+            )
         }
     }
 
@@ -2069,25 +2083,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (active != null) {
-            val chats = preferences.loadProjectChats(active.id)
-            val userMessages = chats.sumOf { preferences.loadMessages(active.id, it.id).count { m -> m.fromUser } }
-            val workspaceDir = File(getApplication<Application>().filesDir, "workspaces/${active.id}")
-            val userFiles = if (workspaceDir.isDirectory) {
-                if (workspaceDir.walkTopDown().any { file ->
-                    file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
-                }) 1 else 0
-            } else 0
-
-            if (userMessages == 0 && userFiles == 0 && !_state.value.isRunning && !_state.value.projectTerminalRunning) {
-                // Unused empty project; delete immediately so it does not clutter the project list.
-                _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == active.id }) }
-                preferences.saveProjects(_state.value.projects)
-                viewModelScope.launch(Dispatchers.IO) {
-                    workspaceDir.deleteRecursively()
-                    terminalHistoryFile(active.id).delete()
-                    preferences.deleteProjectChats(active.id)
-                }
-            }
+            // Closing is not deleting. Previously an "unused empty project" was removed
+            // here and its workspace, terminal history and chats were destroyed without
+            // confirmation. A new project has zero messages and zero files by
+            // definition, so that condition also matched projects holding real work
+            // whose messages had not been persisted. Preserve, unconditionally.
+            projectLifecycle.event(
+                ProjectLifecycleEvent.PROJECT_PRESERVED_ON_CLOSE,
+                ProjectLifecycle.Trigger.PROJECT_CLOSED,
+                outcome = ProjectLifecycle.Outcome.PRESERVE,
+                projectRef = ProjectLifecycle.projectRef(active.id),
+                kind = active.kind,
+            )
         }
 
         _state.update {
@@ -2785,6 +2792,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteProject(projectId: String) {
         val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return
         if (_state.value.activeProject?.id == projectId || _state.value.isRunning || _state.value.projectTerminalRunning) return
+        projectLifecycle.event(
+            ProjectLifecycleEvent.PROJECT_DELETE_REQUESTED,
+            ProjectLifecycle.Trigger.EXPLICIT_DELETE,
+            projectRef = ProjectLifecycle.projectRef(projectId),
+            kind = project.kind,
+        )
+        // The only path permitted to destroy a project, and it is reached solely from the
+        // confirmation dialog in the Projects screen. The policy is shared with tests.
+        if (!ProjectLifecycle.mayDelete(ProjectLifecycle.Trigger.EXPLICIT_DELETE, confirmed = true)) {
+            projectLifecycle.event(
+                ProjectLifecycleEvent.PROJECT_DELETE_FAILED,
+                ProjectLifecycle.Trigger.EXPLICIT_DELETE,
+                outcome = ProjectLifecycle.Outcome.PRESERVE,
+                projectRef = ProjectLifecycle.projectRef(projectId),
+            )
+            return
+        }
+        projectLifecycle.event(
+            ProjectLifecycleEvent.PROJECT_DELETE_CONFIRMED,
+            ProjectLifecycle.Trigger.EXPLICIT_DELETE,
+            outcome = ProjectLifecycle.Outcome.DELETE,
+            projectRef = ProjectLifecycle.projectRef(projectId),
+            kind = project.kind,
+            confirmed = true,
+        )
         _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == projectId }) }
         preferences.saveProjects(_state.value.projects)
         viewModelScope.launch(Dispatchers.IO) {
@@ -2792,6 +2824,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             File(filesDir, "workspaces/${project.id}").deleteRecursively()
             terminalHistoryFile(project.id).delete()
             preferences.deleteProjectChats(project.id)
+            projectLifecycle.event(
+                ProjectLifecycleEvent.PROJECT_DELETE_COMPLETED,
+                ProjectLifecycle.Trigger.EXPLICIT_DELETE,
+                outcome = ProjectLifecycle.Outcome.DELETE,
+                projectRef = ProjectLifecycle.projectRef(projectId),
+            )
         }
     }
 
