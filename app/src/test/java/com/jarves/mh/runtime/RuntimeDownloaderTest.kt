@@ -5,6 +5,7 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Files
+import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -38,10 +39,16 @@ class RuntimeDownloaderTest {
         /** Truncates the body of the first response for each requested end offset, once. */
         var truncateOneResponseAt: Int? = null,
         val failFirstRequests: MutableSet<Int> = mutableSetOf(),
-        val requests: MutableList<LongRange?> = mutableListOf(),
+        // open() can be called simultaneously by the parallel Dispatchers.IO segment
+        // workers, so recording must be atomic: a plain ArrayList silently loses
+        // concurrent adds. Readers copy the list while synchronized if workers may
+        // still be active.
+        val requests: MutableList<LongRange?> = Collections.synchronizedList(mutableListOf()),
     ) : HttpGet {
         private val seen = AtomicInteger()
-        private val truncatedEnds = mutableSetOf<Long>()
+        // Written from the same parallel workers: a plain HashSet can lose an add or
+        // admit the same end offset twice, truncating more segments than intended.
+        private val truncatedEnds: MutableSet<Long> = Collections.synchronizedSet(mutableSetOf())
 
         override fun open(url: String, range: LongRange?, ifRange: String?): HttpSegment {
             requests += range

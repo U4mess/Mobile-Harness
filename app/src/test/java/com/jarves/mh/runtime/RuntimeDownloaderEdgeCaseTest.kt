@@ -5,6 +5,7 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Files
+import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -42,7 +43,10 @@ class RuntimeDownloaderEdgeCaseTest {
         private val concurrent = AtomicInteger()
         val openCount = AtomicInteger()
         val maxConcurrent = AtomicInteger()
-        val rangedRequests = mutableListOf<LongRange>()
+        // open() runs on parallel Dispatchers.IO workers, so recording must be atomic:
+        // a plain ArrayList silently loses concurrent adds and made the range
+        // assertions flap. Readers must still snapshot it while workers may be active.
+        val rangedRequests: MutableList<LongRange> = Collections.synchronizedList(mutableListOf())
         val concurrentAtFallback = AtomicInteger(-1)
         val blockingStarted = AtomicBoolean(false)
         val blocking = BlockingStream()
