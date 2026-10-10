@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -104,7 +105,7 @@ import com.jarves.mh.network.DiscoveredModel
 import com.jarves.mh.network.ModelDiscoveryResult
 import com.jarves.mh.runtime.AntigravityAuthStatus
 import com.jarves.mh.ui.theme.PocketBlue
-import com.jarves.mh.ui.theme.PocketOrange
+import com.jarves.mh.ui.theme.PocketTheme
 import kotlinx.coroutines.launch
 
 private data class KeyConnectionStatus(
@@ -151,6 +152,96 @@ internal fun formatAntigravityModelTier(id: String): String = when {
  *  2. Coding agent picker + installs + updates
  *  3. AI connection (Antigravity OAuth OR provider + model + API keys)
  */
+/**
+ * Agent-screen presentation policy.
+ *
+ * Status, action and identity roles are decided here as plain enums so the rules can be
+ * asserted directly in a unit test instead of being restated there. Colours are resolved
+ * by the caller from `MaterialTheme` / `PocketTheme`, because those accessors are
+ * `@Composable` and cannot be read from a non-composable function.
+ */
+internal object AgentPresentation {
+
+    /** Semantic role of the live-connection chip. Never a brand accent. */
+    enum class StatusRole { SUCCESS, PRIMARY, ERROR, NEUTRAL }
+
+    /**
+     * Fixed precedence: a test in flight is PRIMARY; a genuinely healthy connection is
+     * SUCCESS; a failure or a signed-out Antigravity account is ERROR; anything not yet
+     * tested is NEUTRAL. Success is never rendered as the primary brand colour.
+     */
+    fun statusRole(
+        testing: Boolean,
+        failed: Boolean,
+        healthy: Boolean,
+    ): StatusRole = when {
+        testing -> StatusRole.PRIMARY
+        failed -> StatusRole.ERROR
+        healthy -> StatusRole.SUCCESS
+        else -> StatusRole.NEUTRAL
+    }
+
+    enum class StatusLabel(val text: String) {
+        TESTING("Testing…"),
+        FAILED("Attention"),
+        HEALTHY("Online"),
+        UNTESTED("Not tested"),
+    }
+
+    fun statusLabel(role: StatusRole): String = when (role) {
+        StatusRole.PRIMARY -> StatusLabel.TESTING.text
+        StatusRole.ERROR -> StatusLabel.FAILED.text
+        StatusRole.SUCCESS -> StatusLabel.HEALTHY.text
+        StatusRole.NEUTRAL -> StatusLabel.UNTESTED.text
+    }
+
+    /** Connection rows that only ever open a detail sheet, in display order. */
+    enum class ConnectionRow(val title: String) {
+        PROVIDER("AI provider"),
+        MODEL("AI model"),
+        CREDENTIALS("Credentials"),
+        ADVANCED("Advanced settings"),
+    }
+
+    /** The single primary connection action; credentials have their own save action. */
+    const val TEST_CONNECTION_LABEL = "Test connection"
+}
+
+/**
+ * A compact text action that still meets the 48dp interaction minimum.
+ *
+ * The visible label stays small; only the touch area grows, so the controls can sit on a
+ * dense row without becoming unreachable. Uses a minimum rather than a fixed height so
+ * the label can wrap at large system font scales.
+ */
+@Composable
+private fun AgentTextAction(
+    text: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Text(
+        text,
+        style = PocketTheme.typography.buttonLabel,
+        color = if (enabled) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        modifier = Modifier
+            .clickable(enabled = enabled, onClick = onClick)
+            .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget)
+            .padding(horizontal = PocketTheme.spacing.space8, vertical = PocketTheme.spacing.space8),
+    )
+}
+
+@Composable
+private fun SuccessStatusColours(): Triple<Color, Color, Color> = Triple(
+    PocketTheme.colors.success,
+    PocketTheme.colors.successContainer,
+    PocketTheme.colors.onSuccessContainer,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AgentScreen(
@@ -309,20 +400,33 @@ fun AgentScreen(
     val antigravityHelloFailed = isAntigravity && state.apiPingStatus == ApiPingStatus.FAILED
     val pillLoading = antigravityTesting || (!isAntigravity && state.apiPingStatus == ApiPingStatus.PINGING)
 
-    val (dot, label, pillBg) = if (isAntigravity) {
-        when {
-            antigravityTesting -> Triple(PocketOrange, "Testing…", PocketOrange.copy(alpha = 0.13f))
-            state.antigravityAuth.status != AntigravityAuthStatus.SIGNED_IN || antigravityHelloFailed ->
-                Triple(MaterialTheme.colorScheme.error, "Attention", MaterialTheme.colorScheme.error.copy(alpha = 0.12f))
-            else -> Triple(Color(0xFF58C9A3), "Online", Color(0xFF58C9A3).copy(alpha = 0.13f))
-        }
+    val successColour = PocketTheme.colors.success
+    val successContainerColour = PocketTheme.colors.successContainer
+    val statusRole = if (isAntigravity) {
+        AgentPresentation.statusRole(
+            testing = antigravityTesting,
+            failed = state.antigravityAuth.status != AntigravityAuthStatus.SIGNED_IN || antigravityHelloFailed,
+            healthy = true,
+        )
     } else {
-        when (state.apiPingStatus) {
-            ApiPingStatus.OK -> Triple(Color(0xFF58C9A3), "Online", Color(0xFF58C9A3).copy(alpha = 0.13f))
-            ApiPingStatus.FAILED -> Triple(MaterialTheme.colorScheme.error, "Attention", MaterialTheme.colorScheme.error.copy(alpha = 0.12f))
-            ApiPingStatus.PINGING -> Triple(PocketOrange, "Testing…", PocketOrange.copy(alpha = 0.13f))
-            ApiPingStatus.IDLE -> Triple(MaterialTheme.colorScheme.onSurfaceVariant, "Not tested", MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-        }
+        AgentPresentation.statusRole(
+            testing = state.apiPingStatus == ApiPingStatus.PINGING,
+            failed = state.apiPingStatus == ApiPingStatus.FAILED,
+            healthy = state.apiPingStatus == ApiPingStatus.OK,
+        )
+    }
+    val dot = when (statusRole) {
+        AgentPresentation.StatusRole.SUCCESS -> successColour
+        AgentPresentation.StatusRole.PRIMARY -> MaterialTheme.colorScheme.primary
+        AgentPresentation.StatusRole.ERROR -> MaterialTheme.colorScheme.error
+        AgentPresentation.StatusRole.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val label = AgentPresentation.statusLabel(statusRole)
+    val pillBg = when (statusRole) {
+        AgentPresentation.StatusRole.SUCCESS -> successContainerColour
+        AgentPresentation.StatusRole.PRIMARY -> MaterialTheme.colorScheme.primaryContainer
+        AgentPresentation.StatusRole.ERROR -> MaterialTheme.colorScheme.errorContainer
+        AgentPresentation.StatusRole.NEUTRAL -> MaterialTheme.colorScheme.surfaceVariant
     }
 
     // ── Antigravity Model Modal Bottom Sheet ──
@@ -340,7 +444,7 @@ fun AgentScreen(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Select Model", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("Select Model", style = PocketTheme.typography.sectionTitle)
                         Text(
                             "${filteredAntigravityModels.size} available for Antigravity",
                             fontSize = 12.sp,
@@ -378,10 +482,10 @@ fun AgentScreen(
                             val isSelected = state.antigravityModel == modelId
                             Surface(
                                 shape = RoundedCornerShape(14.dp),
-                                color = if (isSelected) PocketOrange.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
                                 border = BorderStroke(
                                     1.dp,
-                                    if (isSelected) PocketOrange.copy(alpha = 0.45f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                                    if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
                                 ),
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -400,20 +504,20 @@ fun AgentScreen(
                                                 formatAntigravityModelName(modelId),
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontSize = 14.sp,
-                                                color = if (isSelected) PocketOrange else MaterialTheme.colorScheme.onSurface,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                                             )
                                             val tier = formatAntigravityModelTier(modelId)
                                             if (tier.isNotEmpty()) {
                                                 Spacer(Modifier.width(8.dp))
                                                 Surface(
-                                                    color = if (isSelected) PocketOrange.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant,
+                                                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                                                     shape = RoundedCornerShape(4.dp),
                                                 ) {
                                                     Text(
                                                         tier,
                                                         fontSize = 9.sp,
                                                         fontWeight = FontWeight.Bold,
-                                                        color = if (isSelected) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
                                                     )
                                                 }
@@ -451,7 +555,7 @@ fun AgentScreen(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Available Models", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("Available Models", style = PocketTheme.typography.sectionTitle)
                         Text(
                             if (models.isEmpty()) selectedKind.title else "${filteredModels.size} of ${models.size}",
                             fontSize = 12.sp,
@@ -460,7 +564,7 @@ fun AgentScreen(
                     }
                     IconButton(onClick = ::discoverModels, enabled = !isDiscovering) {
                         if (isDiscovering) {
-                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = PocketOrange)
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
                         } else {
                             Icon(Icons.Default.Refresh, "Refresh models")
                         }
@@ -481,11 +585,11 @@ fun AgentScreen(
                 if (status != null) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = if (statusOk) PocketOrange.copy(alpha = 0.09f)
+                        color = if (statusOk) PocketTheme.colors.successContainer
                         else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f),
                         border = BorderStroke(
                             1.dp,
-                            if (statusOk) PocketOrange.copy(alpha = 0.28f)
+                            if (statusOk) PocketTheme.colors.success
                             else MaterialTheme.colorScheme.error.copy(alpha = 0.35f),
                         ),
                         modifier = Modifier.fillMaxWidth(),
@@ -496,13 +600,13 @@ fun AgentScreen(
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(15.dp),
                                     strokeWidth = 1.6.dp,
-                                    color = PocketOrange,
+                                    color = MaterialTheme.colorScheme.primary,
                                 )
                             } else {
                                 Icon(
                                     if (statusOk) Icons.Default.Info else Icons.Default.Warning,
                                     contentDescription = null,
-                                    tint = if (statusOk) PocketOrange else MaterialTheme.colorScheme.error,
+                                    tint = if (statusOk) PocketTheme.colors.success else MaterialTheme.colorScheme.error,
                                     modifier = Modifier.size(15.dp),
                                 )
                             }
@@ -537,7 +641,7 @@ fun AgentScreen(
                         contentAlignment = Alignment.Center,
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(Modifier.size(32.dp), color = PocketOrange, strokeWidth = 3.dp)
+                            CircularProgressIndicator(Modifier.size(20.dp), color = MaterialTheme.colorScheme.primary, strokeWidth = 2.dp)
                             Spacer(Modifier.height(14.dp))
                             Text(
                                 "Discovering models from ${selectedKind.title}…",
@@ -556,8 +660,8 @@ fun AgentScreen(
                         if (modelSearch.isNotBlank()) {
                             Surface(
                                 shape = RoundedCornerShape(14.dp),
-                                color = PocketOrange.copy(alpha = 0.12f),
-                                border = BorderStroke(1.dp, PocketOrange.copy(alpha = 0.5f)),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
@@ -570,11 +674,11 @@ fun AgentScreen(
                                     Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Icon(Icons.Default.Check, null, tint = PocketOrange, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(10.dp))
                                     Column(Modifier.weight(1f)) {
                                         Text("Use custom model ID:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text(modelSearch.trim(), fontWeight = FontWeight.Bold, fontSize = 14.sp, color = PocketOrange)
+                                        Text(modelSearch.trim(), fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
                                     }
                                 }
                             }
@@ -604,10 +708,10 @@ fun AgentScreen(
                                 val isSelected = model == opt.id
                                 Surface(
                                     shape = RoundedCornerShape(14.dp),
-                                    color = if (isSelected) PocketOrange.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
                                     border = BorderStroke(
                                         1.dp,
-                                        if (isSelected) PocketOrange.copy(alpha = 0.45f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
                                     ),
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -626,7 +730,7 @@ fun AgentScreen(
                                                 opt.displayName,
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontSize = 14.sp,
-                                                color = if (isSelected) PocketOrange else MaterialTheme.colorScheme.onSurface,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                                             )
                                             Text(
                                                 opt.id,
@@ -651,8 +755,8 @@ fun AgentScreen(
                             item {
                                 Surface(
                                     shape = RoundedCornerShape(14.dp),
-                                    color = PocketOrange.copy(alpha = 0.12f),
-                                    border = BorderStroke(1.dp, PocketOrange.copy(alpha = 0.5f)),
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable {
@@ -665,11 +769,11 @@ fun AgentScreen(
                                         Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        Icon(Icons.Default.Check, null, tint = PocketOrange, modifier = Modifier.size(18.dp))
+                                        Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                                         Spacer(Modifier.width(10.dp))
                                         Column(Modifier.weight(1f)) {
                                             Text("Use custom model ID:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Text(modelSearch.trim(), fontWeight = FontWeight.Bold, fontSize = 14.sp, color = PocketOrange)
+                                            Text(modelSearch.trim(), fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
                                         }
                                     }
                                 }
@@ -679,10 +783,10 @@ fun AgentScreen(
                             val isSelected = model == option.id
                             Surface(
                                 shape = RoundedCornerShape(14.dp),
-                                color = if (isSelected) PocketOrange.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
                                 border = BorderStroke(
                                     1.dp,
-                                    if (isSelected) PocketOrange.copy(alpha = 0.45f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                                    if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
                                 ),
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -702,13 +806,13 @@ fun AgentScreen(
                                                 option.displayName,
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontSize = 14.sp,
-                                                color = if (isSelected) PocketOrange else MaterialTheme.colorScheme.onSurface,
+                                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
                                             )
                                             if (option.isFree) {
                                                 Spacer(Modifier.width(6.dp))
-                                                Text("FREE", color = Color(0xFF58C99C), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                Text("FREE", style = PocketTheme.typography.metadata, color = PocketTheme.colors.success)
                                             }
                                         }
                                         if (option.displayName != option.id) {
@@ -803,7 +907,7 @@ fun AgentScreen(
                 .padding(padding)
                 .imePadding(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(PocketTheme.spacing.space12),
         ) {
             // ── 1. Compact 3-Way Segmented Engine Selector ──
             item {
@@ -833,6 +937,7 @@ fun AgentScreen(
                                     border = if (isSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)) else null,
                                     modifier = Modifier
                                         .weight(1f)
+                                        .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget)
                                         .clickable(enabled = state.agentInstalling == null) {
                                             viewedAgent = agent
                                             if (isInstalled) onSelectAgent(agent)
@@ -852,7 +957,7 @@ fun AgentScreen(
                                             )
                                             if (updateAvailable) {
                                                 Spacer(Modifier.width(3.dp))
-                                                Box(Modifier.size(5.dp).background(PocketOrange, CircleShape))
+                                                Box(Modifier.size(5.dp).background(PocketTheme.colors.success, CircleShape))
                                             }
                                         }
                                     }
@@ -1144,10 +1249,9 @@ fun AgentScreen(
                 ) {
                     Text(
                         "API keys encrypted in Android secure storage · Terminal is accessible from any project",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        style = PocketTheme.typography.supporting,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
-                        lineHeight = 16.sp,
                     )
                 }
             }
@@ -1184,7 +1288,7 @@ private fun AgentAntigravityCard(
             Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Google account", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("Google account", style = PocketTheme.typography.sectionTitle)
             // Google Account Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1213,7 +1317,7 @@ private fun AgentAntigravityCard(
                     Text(
                         if (auth.status == AntigravityAuthStatus.SIGNED_IN) "Connected with Google" else "Required for Antigravity",
                         fontSize = 11.sp,
-                        color = if (auth.status == AntigravityAuthStatus.SIGNED_IN) Color(0xFF2E9D72) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (auth.status == AntigravityAuthStatus.SIGNED_IN) PocketTheme.colors.success else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 if (auth.status == AntigravityAuthStatus.SIGNED_IN) {
@@ -1292,17 +1396,17 @@ private fun AgentAntigravityCard(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .clickable(enabled = !state.antigravityModelsLoading) { onRefreshModels() }
-                                .padding(start = 6.dp, top = 2.dp, bottom = 2.dp),
+                                .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget)
+                                .padding(start = PocketTheme.spacing.space8, end = PocketTheme.spacing.space8),
                         ) {
                             if (state.antigravityModelsLoading) {
-                                CircularProgressIndicator(Modifier.size(11.dp), strokeWidth = 1.4.dp)
-                                Spacer(Modifier.width(4.dp))
+                                CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.4.dp)
+                                Spacer(Modifier.width(PocketTheme.spacing.space4))
                             }
                             Text(
                                 "Sync",
-                                fontSize = 11.sp,
-                                color = PocketOrange,
-                                fontWeight = FontWeight.SemiBold,
+                                style = PocketTheme.typography.buttonLabel,
+                                color = MaterialTheme.colorScheme.primary,
                             )
                         }
                     }
@@ -1322,13 +1426,13 @@ private fun AgentAntigravityCard(
                             Box(
                                 modifier = Modifier
                                     .size(32.dp)
-                                    .background(PocketOrange.copy(alpha = 0.12f), RoundedCornerShape(9.dp)),
+                                    .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(9.dp)),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(
                                     Icons.Default.AutoAwesome,
                                     contentDescription = null,
-                                    tint = PocketOrange,
+                                    tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(16.dp),
                                 )
                             }
@@ -1387,7 +1491,7 @@ private fun AgentAntigravityCard(
                         Text(
                             effortCaption,
                             fontSize = 11.sp,
-                            color = PocketOrange,
+                            color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Medium,
                         )
                     }
@@ -1406,7 +1510,7 @@ private fun AgentAntigravityCard(
                                 val isSelected = state.antigravityEffort == effort
                                 Surface(
                                     shape = RoundedCornerShape(9.dp),
-                                    color = if (isSelected) PocketOrange else Color.Transparent,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
                                     modifier = Modifier
                                         .weight(1f)
                                         .clickable { onSetEffort(effort) },
@@ -1419,7 +1523,7 @@ private fun AgentAntigravityCard(
                                             effort.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.ROOT) else it.toString() },
                                             fontSize = 12.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (isSelected) Color(0xFF241107) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
                                 }
@@ -1433,20 +1537,20 @@ private fun AgentAntigravityCard(
                 OutlinedButton(
                     onClick = onTest,
                     enabled = state.apiPingStatus != ApiPingStatus.PINGING,
-                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = PocketTheme.sizes.standardControlHeight),
                     shape = RoundedCornerShape(13.dp),
-                    border = BorderStroke(1.dp, PocketOrange.copy(alpha = 0.7f)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
                 ) {
                     if (state.apiPingStatus == ApiPingStatus.PINGING) {
-                        CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 1.8.dp, color = PocketOrange)
+                        CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 1.8.dp, color = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
                     } else {
-                        Icon(Icons.Default.Refresh, null, Modifier.size(16.dp), tint = PocketOrange)
+                        Icon(Icons.Default.Refresh, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
                     }
                     Text(
                         if (state.apiPingStatus == ApiPingStatus.PINGING) "Testing connection…" else "Test connection",
-                        color = PocketOrange,
+                        color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
@@ -1456,7 +1560,7 @@ private fun AgentAntigravityCard(
                         Icon(
                             if (state.apiPingStatus == ApiPingStatus.FAILED) Icons.Default.Warning else Icons.Default.CheckCircle,
                             contentDescription = null,
-                            tint = if (state.apiPingStatus == ApiPingStatus.FAILED) MaterialTheme.colorScheme.error else Color(0xFF2E9D72),
+                            tint = if (state.apiPingStatus == ApiPingStatus.FAILED) MaterialTheme.colorScheme.error else PocketTheme.colors.success,
                             modifier = Modifier.size(14.dp),
                         )
                         Spacer(Modifier.width(7.dp))
@@ -1539,7 +1643,7 @@ private fun AgentProviderCard(
         Column(
             Modifier.padding(horizontal = 16.dp, vertical = 18.dp),
         ) {
-            Text("AI provider", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("AI provider", style = PocketTheme.typography.sectionTitle)
             Spacer(Modifier.height(12.dp))
 
             PremiumSummaryRow(
@@ -1593,7 +1697,7 @@ private fun AgentProviderCard(
 
                 PremiumSummaryRow(
                     icon = Icons.Default.Info,
-                    title = if (selectedKind == ProviderKind.CUSTOM) "Custom API settings" else "Endpoint & protocol",
+                    title = if (selectedKind == ProviderKind.CUSTOM) "Custom API settings" else "Advanced settings",
                     subtitle = buildString {
                         append(baseUrl.ifBlank { "Base URL required" })
                         if (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind in DSH_PROTOCOL_PROVIDERS) {
@@ -1687,13 +1791,11 @@ private fun AgentProviderCard(
                     modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("Model & access", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    Text(
-                        if (isDiscovering) "Discovering…" else if (models.isEmpty()) "Discover models" else "${models.size} models",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = PocketOrange,
-                        modifier = Modifier.clickable(enabled = !isDiscovering, onClick = onDiscover).padding(6.dp),
+                    Text("Model & access", style = PocketTheme.typography.sectionTitle, modifier = Modifier.weight(1f))
+                    AgentTextAction(
+                        text = if (isDiscovering) "Discovering…" else if (models.isEmpty()) "Discover models" else "${models.size} models",
+                        enabled = !isDiscovering,
+                        onClick = onDiscover,
                     )
                 }
 
@@ -1717,7 +1819,7 @@ private fun AgentProviderCard(
             if (status != null) {
                 Column(modifier = Modifier.padding(start = 48.dp, end = 8.dp, bottom = 8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(if (statusOk) Icons.Default.Info else Icons.Default.Warning, null, tint = if (statusOk) PocketOrange else MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                        Icon(if (statusOk) Icons.Default.Info else Icons.Default.Warning, null, tint = if (statusOk) PocketTheme.colors.success else MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(7.dp))
                         Text(status, fontSize = 10.sp, lineHeight = 14.sp, color = if (statusOk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
                     }
@@ -1753,7 +1855,7 @@ private fun AgentProviderCard(
                         fontSize = 10.sp,
                         lineHeight = 14.sp,
                         color = when (keyStatus.successful) {
-                            true -> Color(0xFF2E9D72)
+                            true -> PocketTheme.colors.success
                             false -> MaterialTheme.colorScheme.error
                             null -> MaterialTheme.colorScheme.onSurfaceVariant
                         },
@@ -1777,13 +1879,10 @@ private fun AgentProviderCard(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(if (selectedKind == ProviderKind.CLAUDE) "Saved tokens (${savedKeys.size})" else "Saved keys (${savedKeys.size})", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                        Text(
-                            if (addKeyExpanded) "Cancel" else "+ Add key",
-                            fontSize = 11.sp,
-                            color = PocketOrange,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.clickable { addKeyExpanded = !addKeyExpanded }.padding(6.dp),
+                        Text(if (selectedKind == ProviderKind.CLAUDE) "Saved tokens (${savedKeys.size})" else "Saved keys (${savedKeys.size})", style = PocketTheme.typography.metadata, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                        AgentTextAction(
+                            text = if (addKeyExpanded) "Cancel" else "+ Add key",
+                            onClick = { addKeyExpanded = !addKeyExpanded },
                         )
                     }
                     savedKeys.forEach { key ->
@@ -1795,18 +1894,21 @@ private fun AgentProviderCard(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Column(Modifier.weight(1f)) {
-                                        Text(key.name, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                                        Text(if (key.isActive) "Active" else "Tap to activate", fontSize = 10.sp, color = if (key.isActive) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(key.name, style = PocketTheme.typography.rowTitle)
+                                        Text(if (key.isActive) "Active" else "Tap to activate", style = PocketTheme.typography.metadata, color = if (key.isActive) PocketTheme.colors.success else MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     AgentSelectionDot(key.isActive)
-                                    IconButton(onClick = { onRemoveKey(key.id) }) {
-                                        Icon(Icons.Default.DeleteSweep, "Remove", Modifier.size(17.dp))
+                                    IconButton(
+                                        onClick = { onRemoveKey(key.id) },
+                                        modifier = Modifier.size(PocketTheme.sizes.minimumTouchTarget),
+                                    ) {
+                                        Icon(Icons.Default.DeleteSweep, "Remove", Modifier.size(18.dp))
                                     }
                                 }
                                 keyStatus?.let {
                                     Row(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                                         if (it.successful == null) CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.5.dp)
-                                        else Icon(if (it.successful) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = if (it.successful) Color(0xFF2E9D72) else MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                                        else Icon(if (it.successful) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = if (it.successful) PocketTheme.colors.success else MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(7.dp))
                                         Column(Modifier.weight(1f)) {
                                             Text(it.message, fontSize = 10.sp, lineHeight = 14.sp, color = if (it.successful == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1862,15 +1964,15 @@ private fun AgentProviderCard(
                 onClick = onValidate,
                 enabled = apiKey.isNotBlank() && !isDiscovering && !isValidating &&
                     (selectedKind == ProviderKind.CLAUDE || (baseUrl.isNotBlank() && model.isNotBlank())),
-                modifier = Modifier.fillMaxWidth().height(46.dp),
+                modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = PocketTheme.sizes.standardControlHeight),
                 shape = RoundedCornerShape(13.dp),
-                border = BorderStroke(1.dp, PocketOrange.copy(alpha = 0.7f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
             ) {
                 if (isValidating) {
-                    CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 1.8.dp, color = PocketOrange)
+                    CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 1.8.dp, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
                 } else {
-                    Icon(if (selectedKind == ProviderKind.CLAUDE) Icons.Default.Check else Icons.Default.Refresh, null, Modifier.size(16.dp), tint = PocketOrange)
+                    Icon(if (selectedKind == ProviderKind.CLAUDE) Icons.Default.Check else Icons.Default.Refresh, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
                 }
                 Text(
@@ -1880,7 +1982,7 @@ private fun AgentProviderCard(
                         selectedKind == ProviderKind.CLAUDE -> "Save subscription token"
                         else -> "Test connection"
                     },
-                    color = PocketOrange,
+                    color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold,
                 )
             }
@@ -1903,10 +2005,10 @@ private fun PremiumSummaryRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            modifier = Modifier.size(38.dp).background(PocketOrange.copy(alpha = 0.10f), RoundedCornerShape(11.dp)),
+            modifier = Modifier.size(32.dp).background(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.shapes.small),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, null, tint = PocketOrange, modifier = Modifier.size(19.dp))
+            Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
@@ -1916,7 +2018,7 @@ private fun PremiumSummaryRow(
                 fontSize = 11.sp,
                 color = when {
                     error -> MaterialTheme.colorScheme.error
-                    positive -> Color(0xFF2E9D72)
+                    positive -> PocketTheme.colors.success
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
                 maxLines = 2,
@@ -1961,16 +2063,17 @@ private fun AgentUpdateBlock(
             Row(
                 modifier = Modifier
                     .clickable(enabled = canCheck, onClick = onCheck)
-                    .padding(horizontal = 6.dp, vertical = 6.dp),
+                    .defaultMinSize(minHeight = PocketTheme.sizes.minimumTouchTarget)
+                    .padding(horizontal = PocketTheme.spacing.space8),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (state.agentUpdatesChecking) {
-                    CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.6.dp)
+                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.6.dp)
                 } else {
-                    Icon(Icons.Default.Refresh, contentDescription = null, tint = PocketOrange, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Default.Refresh, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                 }
-                Spacer(Modifier.width(5.dp))
-                Text("Check updates", color = PocketOrange, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.width(PocketTheme.spacing.space4))
+                Text("Check updates", color = MaterialTheme.colorScheme.primary, style = PocketTheme.typography.buttonLabel)
             }
         }
 
@@ -1984,8 +2087,8 @@ private fun AgentUpdateBlock(
 
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = PocketOrange.copy(alpha = 0.08f),
-                    border = BorderStroke(1.dp, PocketOrange.copy(alpha = 0.28f)),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
                 ) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1993,7 +2096,7 @@ private fun AgentUpdateBlock(
                                 Text(agent.title, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                 Text("v${update.installedVersion} → v${update.latestVersion}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Text("UPDATE", color = PocketOrange, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
+                            Text("UPDATE", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold)
                         }
                         if (updating) {
                             state.agentUpdateMessage?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -2049,10 +2152,10 @@ private fun AgentTypingDots(
 @Composable
 private fun AgentSelectionDot(selected: Boolean) {
     Box(
-        Modifier.size(22.dp).border(if (selected) 2.dp else 1.5.dp, if (selected) PocketOrange else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), CircleShape),
+        Modifier.size(22.dp).border(if (selected) 2.dp else 1.5.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        if (selected) Box(Modifier.size(10.dp).background(PocketOrange, CircleShape))
+        if (selected) Box(Modifier.size(10.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
     }
 }
 
