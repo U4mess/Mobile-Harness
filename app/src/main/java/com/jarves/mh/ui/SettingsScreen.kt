@@ -849,6 +849,6 @@ private fun InfoRow(icon: ImageVector, label: String, value: String) {
 
 private fun formatBytes(bytes: Long): String = when {
     bytes < 1_024 -> "$bytes B"
-    bytes < 1_048_576 -> "%.1f KB".format(bytes / 1_024.0)
-    else -> "%.1f MB".format(bytes / 1_048_576.0)
+    bytes < 1_048_576 -> "%.1f KiB".format(bytes / 1_024.0)
+    else -> "%.1f MiB".format(bytes / 1_048_576.0)
 }

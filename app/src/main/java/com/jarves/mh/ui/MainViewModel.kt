@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.os.SystemClock
 import android.os.Build
+import android.util.Log
 import android.system.Os
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -141,6 +142,8 @@ data class AppUiState(
     val startupProgress: Float = 0f,
     val startupMessage: String = "Checking this device…",
     val startupBytes: Pair<Long, Long>? = null,
+    val startupBytesPerSecond: Long? = null,
+    val startupEtaSeconds: Long? = null,
     val startupLogs: List<String> = emptyList(),
     val startupIndeterminate: Boolean = false,
     val startupError: String? = null,
@@ -219,6 +222,8 @@ data class AppUiState(
     val installedAgentVersions: Map<AgentKind, String> = emptyMap(),
     val agentInstalling: AgentKind? = null,
     val agentMessage: String? = null,
+    /** Last failed on-demand install, attributed to its agent so it is only shown on that agent's tab. */
+    val agentError: Pair<AgentKind, String>? = null,
     val agentProgress: Float = 0f,
     val agentDownloadedBytes: Long? = null,
     val agentTotalBytes: Long? = null,
@@ -280,6 +285,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var activeRuntimeRequest: RuntimeRetryRequest? = null
     private val failedApiKeyIds = mutableSetOf<String>()
     private val transcriptWrites = Channel<TranscriptWrite>(Channel.UNLIMITED)
+    private val operationSequence = java.util.concurrent.atomic.AtomicLong()
     private val initialAgentKind = AgentKind.fromStored(preferences.agentKind)
     private val initialPrimaryAgentKind = preferences.primaryAgentKind
         .takeIf(String::isNotBlank)
@@ -386,9 +392,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val userMessages = chats.sumOf { preferences.loadMessages(project.id, it.id).count { m -> m.fromUser } }
                 val workspaceDir = File(application.filesDir, "workspaces/${project.id}")
                 val userFiles = if (workspaceDir.isDirectory) {
-                    workspaceDir.walkTopDown().filter { file ->
+                    if (workspaceDir.walkTopDown().any { file ->
                         file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
-                    }.count()
+                    }) 1 else 0
                 } else 0
                 val keep = userMessages > 0 || userFiles > 0
                 if (!keep) {
@@ -490,7 +496,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     finalOut to exit
                 }.getOrElse { "Error: ${it.message}" to 1 }
             }
-            _terminalLines.update { it + TerminalOutputLine(command = command, output = output, exitCode = exitCode) }
+            _terminalLines.update { (it + TerminalOutputLine(command = command, output = output, exitCode = exitCode)).takeLast(MAX_PROJECT_TERMINAL_HISTORY) }
             _terminalLiveOutput.value = ""
             _terminalCurrentCommand.value = null
             _isTerminalRunning.value = false
@@ -845,6 +851,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return selected.apply { mkdirs() }
     }
 
+    fun buildOutputsRoot(): File? = _state.value.activeProject?.let { projectWorkspaceRoot(it) }
+
     fun buildAndRunAndroidApp() {
         val project = _state.value.activeProject ?: return
         if (_state.value.androidBuildRunning) return
@@ -884,7 +892,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     buildOutput.trim().takeLast(2_000).ifBlank { "Gradle build failed (exit code $exitCode)" }
                 }
                 val apk = workspace.walkTopDown()
-                    .filter { it.isFile && it.extension.equals("apk", ignoreCase = true) && it.path.contains("/outputs/apk/debug/") }
+                    .onEnter { it.name !in setOf(".git", ".gradle", ".cxx", "node_modules") }
+                    .filter { it.isFile && it.extension.equals("apk", ignoreCase = true) && it.invariantSeparatorsPath.contains("/outputs/apk/") &&
+                        it.invariantSeparatorsPath.substringAfter("/outputs/apk/").split('/').dropLast(1).any { part -> part.equals("debug", true) } }
                     .maxByOrNull(File::lastModified)
                     ?: error("Gradle finished but no debug APK was found")
                 AndroidAppInstaller.install(getApplication(), apk)
@@ -1072,6 +1082,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     startupProgress = snapshot.progress,
                     startupMessage = snapshot.message,
                     startupBytes = snapshot.totalBytes?.let { total -> (snapshot.downloadedBytes ?: 0L) to total },
+                    startupBytesPerSecond = snapshot.bytesPerSecond,
+                    startupEtaSeconds = snapshot.etaSeconds,
                     startupLogs = snapshot.logs,
                     startupIndeterminate = snapshot.indeterminate,
                     startupError = null,
@@ -1343,18 +1355,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Installs the other agent on demand (Settings) with live progress, then switches to it. */
     fun installAgent(kind: AgentKind) {
         if (_state.value.agentInstalling != null) return
+        if (_state.value.agentUpdating != null) {
+            // Install and update share the same PRoot tree and agent markers.
+            logOperation("install", kind, "rejected: an agent update is already running")
+            _state.update { it.copy(toastMessage = "Wait for the agent update to finish first.") }
+            return
+        }
         if (_state.value.isRunning) {
+            logOperation("install", kind, "rejected: the agent is running a task")
             _state.update { it.copy(toastMessage = "Stop the current agent before switching.") }
             return
         }
         if (installer.isAgentInstalled(kind)) {
+            logOperation("install", kind, "skipped: already installed")
             selectAgent(kind)
             return
         }
+        val operationId = operationSequence.incrementAndGet()
+        val startedAt = SystemClock.elapsedRealtime()
+        logOperation("install", kind, "started", operationId = operationId)
         _state.update {
             it.copy(
                 agentInstalling = kind,
                 agentMessage = "Preparing ${kind.title}…",
+                agentError = null,
                 agentProgress = 0f,
                 agentDownloadedBytes = null,
                 agentTotalBytes = null,
@@ -1364,47 +1388,74 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             var sampleBytes = 0L
             var sampleAt = SystemClock.elapsedRealtime()
-            val result = runCatching {
-                withContext(Dispatchers.IO) {
-                    agentRegistry.require(kind).install(installer) { progress ->
-                        val now = SystemClock.elapsedRealtime()
-                        val bytes = progress.downloadedBytes
-                        val elapsed = now - sampleAt
-                        val speed = if (bytes != null && elapsed >= 500L) {
-                            ((bytes - sampleBytes).coerceAtLeast(0L) * 1_000L / elapsed.coerceAtLeast(1L)).also {
-                                sampleBytes = bytes
-                                sampleAt = now
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        agentRegistry.require(kind).install(installer) { progress ->
+                            val now = SystemClock.elapsedRealtime()
+                            val bytes = progress.downloadedBytes
+                            val elapsed = now - sampleAt
+                            val speed = if (bytes != null && elapsed >= 500L) {
+                                ((bytes - sampleBytes).coerceAtLeast(0L) * 1_000L / elapsed.coerceAtLeast(1L)).also {
+                                    sampleBytes = bytes
+                                    sampleAt = now
+                                }
+                            } else _state.value.agentBytesPerSecond
+                            _state.update { current ->
+                                current.copy(
+                                    agentMessage = progress.message,
+                                    agentProgress = progress.fraction.coerceIn(0f, 1f),
+                                    agentDownloadedBytes = bytes ?: current.agentDownloadedBytes,
+                                    agentTotalBytes = progress.totalBytes ?: current.agentTotalBytes,
+                                    agentBytesPerSecond = speed,
+                                )
                             }
-                        } else _state.value.agentBytesPerSecond
-                        _state.update { current ->
-                            current.copy(
-                                agentMessage = progress.message,
-                                agentProgress = progress.fraction.coerceIn(0f, 1f),
-                                agentDownloadedBytes = bytes ?: current.agentDownloadedBytes,
-                                agentTotalBytes = progress.totalBytes ?: current.agentTotalBytes,
-                                agentBytesPerSecond = speed,
-                            )
                         }
                     }
                 }
-            }
-            result.onSuccess {
-                if (kind == AgentKind.DEEPSEEK_HARNESS) preferences.dshVersion = installer.dshVersion
-                selectAgent(kind)
-            }
-            _state.update { current ->
-                current.copy(
-                    installedAgentVersions = installer.installedAgentVersions(),
-                    agentInstalling = null,
-                    agentProgress = 0f,
-                    agentDownloadedBytes = null,
-                    agentTotalBytes = null,
-                    agentBytesPerSecond = null,
-                    agentMessage = result.fold(
-                        onSuccess = { "${kind.title} is ready" },
-                        onFailure = { _ -> result.exceptionOrNull()?.message?.take(200) ?: "Could not install ${kind.title}" },
-                    ),
+                result.onSuccess {
+                    if (kind == AgentKind.DEEPSEEK_HARNESS) preferences.dshVersion = installer.dshVersion
+                    selectAgent(kind)
+                }
+                val failure = result.exceptionOrNull()
+                logOperation(
+                    "install",
+                    kind,
+                    if (failure == null) "completed" else "failed: ${failure.message?.take(200)}",
+                    operationId = operationId,
+                    startedAt = startedAt,
                 )
+                _state.update { current ->
+                    current.copy(
+                        installedAgentVersions = installer.installedAgentVersions(),
+                        agentInstalling = null,
+                        agentProgress = 0f,
+                        agentDownloadedBytes = null,
+                        agentTotalBytes = null,
+                        agentBytesPerSecond = null,
+                        agentMessage = result.fold(
+                            onSuccess = { "${kind.title} is ready" },
+                            onFailure = { _ -> failure?.message?.take(200) ?: "Could not install ${kind.title}" },
+                        ),
+                        agentError = failure?.let { kind to (it.message?.take(200) ?: "Could not install ${kind.title}") },
+                    )
+                }
+            } finally {
+                // Guarantees the busy flag is released on any exit, including
+                // ViewModel-scope teardown. Navigating between screens does not
+                // cancel this coroutine, so there is no "back out to cancel" path.
+                if (_state.value.agentInstalling == kind) {
+                    logOperation("install", kind, "cancelled", operationId = operationId, startedAt = startedAt)
+                    _state.update {
+                        it.copy(
+                            agentInstalling = null,
+                            agentProgress = 0f,
+                            agentDownloadedBytes = null,
+                            agentTotalBytes = null,
+                            agentBytesPerSecond = null,
+                        )
+                    }
+                }
             }
         }
     }
@@ -1430,6 +1481,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateAgent(kind: AgentKind) {
         val update = _state.value.agentUpdates[kind] ?: return
         if (_state.value.agentUpdating != null || _state.value.agentInstalling != null || _state.value.isRunning) return
+        val operationId = operationSequence.incrementAndGet()
+        val startedAt = SystemClock.elapsedRealtime()
+        logOperation("update", kind, "started (requested ${update.latestVersion})", operationId = operationId)
         _state.update {
             it.copy(
                 agentUpdating = kind,
@@ -1443,46 +1497,89 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             var sampleBytes = 0L
             var sampleAt = SystemClock.elapsedRealtime()
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    installer.updateAgent(kind, update.latestVersion) { progress ->
-                        val now = SystemClock.elapsedRealtime()
-                        val bytes = progress.downloadedBytes
-                        val elapsed = now - sampleAt
-                        val speed = if (bytes != null && elapsed >= 500L) {
-                            ((bytes - sampleBytes).coerceAtLeast(0L) * 1_000L / elapsed.coerceAtLeast(1L)).also {
-                                sampleBytes = bytes
-                                sampleAt = now
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        installer.updateAgent(kind, update.latestVersion) { progress ->
+                            val now = SystemClock.elapsedRealtime()
+                            val bytes = progress.downloadedBytes
+                            val elapsed = now - sampleAt
+                            val speed = if (bytes != null && elapsed >= 500L) {
+                                ((bytes - sampleBytes).coerceAtLeast(0L) * 1_000L / elapsed.coerceAtLeast(1L)).also {
+                                    sampleBytes = bytes
+                                    sampleAt = now
+                                }
+                            } else _state.value.agentUpdateBytesPerSecond
+                            _state.update {
+                                it.copy(
+                                    agentUpdateMessage = progress.message,
+                                    agentUpdateProgress = progress.fraction.coerceIn(0f, 1f),
+                                    agentUpdateDownloadedBytes = bytes ?: it.agentUpdateDownloadedBytes,
+                                    agentUpdateTotalBytes = progress.totalBytes ?: it.agentUpdateTotalBytes,
+                                    agentUpdateBytesPerSecond = speed,
+                                )
                             }
-                        } else _state.value.agentUpdateBytesPerSecond
-                        _state.update {
-                            it.copy(
-                                agentUpdateMessage = progress.message,
-                                agentUpdateProgress = progress.fraction.coerceIn(0f, 1f),
-                                agentUpdateDownloadedBytes = bytes ?: it.agentUpdateDownloadedBytes,
-                                agentUpdateTotalBytes = progress.totalBytes ?: it.agentUpdateTotalBytes,
-                                agentUpdateBytesPerSecond = speed,
-                            )
                         }
                     }
                 }
-            }
-            _state.update { current ->
-                current.copy(
-                    installedAgentVersions = installer.installedAgentVersions(),
-                    agentUpdates = if (result.isSuccess) current.agentUpdates - kind else current.agentUpdates,
-                    agentUpdating = null,
-                    agentUpdateMessage = result.fold(
-                        onSuccess = { "${kind.title} updated to ${update.latestVersion}" },
-                        onFailure = { error -> error.message?.take(220) ?: "Could not update ${kind.title}" },
+                _state.update { current ->
+                    current.copy(
+                        installedAgentVersions = installer.installedAgentVersions(),
+                        agentUpdates = if (result.isSuccess) current.agentUpdates - kind else current.agentUpdates,
+                        agentUpdating = null,
+                        agentUpdateMessage = result.fold(
+                            onSuccess = { "${kind.title} updated to ${update.latestVersion}" },
+                            onFailure = { error -> error.message?.take(220) ?: "Could not update ${kind.title}" },
+                        ),
+                        agentUpdateProgress = if (result.isSuccess) 1f else 0f,
+                        agentUpdateDownloadedBytes = null,
+                        agentUpdateTotalBytes = null,
+                        agentUpdateBytesPerSecond = null,
+                    )
+                }
+                logOperation(
+                    "update",
+                    kind,
+                    result.fold(
+                        onSuccess = { "completed (${update.latestVersion})" },
+                        onFailure = { error -> "failed: ${error.message?.take(200)}" },
                     ),
-                    agentUpdateProgress = if (result.isSuccess) 1f else 0f,
-                    agentUpdateDownloadedBytes = null,
-                    agentUpdateTotalBytes = null,
-                    agentUpdateBytesPerSecond = null,
+                    operationId = operationId,
+                    startedAt = startedAt,
                 )
+            } finally {
+                // Guarantees the busy flag is released on any exit, including
+                // ViewModel-scope teardown. Navigating between screens does not
+                // cancel this coroutine, so there is no "back out to cancel" path.
+                if (_state.value.agentUpdating == kind) {
+                    logOperation("update", kind, "cancelled", operationId = operationId, startedAt = startedAt)
+                    _state.update {
+                        it.copy(
+                            agentUpdating = null,
+                            agentUpdateDownloadedBytes = null,
+                            agentUpdateTotalBytes = null,
+                            agentUpdateBytesPerSecond = null,
+                        )
+                    }
+                }
             }
         }
+    }
+
+    /**
+     * Credential-free operation trace: operation, id, agent, stage, elapsed and reason
+     * a request was rejected. Never logs API keys, tokens or process environments.
+     */
+    private fun logOperation(
+        operation: String,
+        kind: AgentKind,
+        stage: String,
+        operationId: Long? = null,
+        startedAt: Long? = null,
+    ) {
+        val elapsed = startedAt?.let { " elapsed=${SystemClock.elapsedRealtime() - it}ms" }.orEmpty()
+        val id = operationId?.let { " id=$it" }.orEmpty()
+        Log.i(OPERATION_TAG, "op=$operation$id agent=${kind.stableId} stage=$stage$elapsed")
     }
 
     fun startAntigravityLogin() {
@@ -1923,9 +2020,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val userMessages = chats.sumOf { preferences.loadMessages(active.id, it.id).count { m -> m.fromUser } }
             val workspaceDir = File(getApplication<Application>().filesDir, "workspaces/${active.id}")
             val userFiles = if (workspaceDir.isDirectory) {
-                workspaceDir.walkTopDown().filter { file ->
+                if (workspaceDir.walkTopDown().any { file ->
                     file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
-                }.count()
+                }) 1 else 0
             } else 0
 
             if (userMessages == 0 && userFiles == 0 && !_state.value.isRunning && !_state.value.projectTerminalRunning) {
@@ -2843,6 +2940,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .onEnter { directory ->
                 val relative = if (directory == root) "" else directory.relativeTo(root).invariantSeparatorsPath
                 directory == root || (!isClaudeRuntimeMetadata(relative) &&
+                    !isHeavyDirectory(directory.name) &&
                     !Files.isSymbolicLink(directory.toPath()) &&
                     runCatching { directory.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
                     )
@@ -2868,6 +2966,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .sortedWith(compareBy<WorkspaceEntry> { it.path.lowercase() }.thenByDescending { it.isDirectory })
             .toList()
     }
+    private fun isHeavyDirectory(name: String): Boolean = name in setOf(
+        ".git", ".gradle", ".idea", ".cxx", ".kotlin", "build",
+        "node_modules", ".next", ".dart_tool", ".venv", "venv",
+        "__pycache__", ".cache",
+    )
 
     private fun isClaudeRuntimeMetadata(relativePath: String): Boolean {
         return relativePath == ".claude" ||
@@ -3535,6 +3638,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
+        private const val OPERATION_TAG = "RuntimeOperation"
         private const val MINIMUM_INITIALIZATION_SCREEN_MS = 3_000L
         private const val MAX_VISIBLE_WORKSPACE_ENTRIES = 2_000
         private const val MAX_PROJECT_TERMINAL_HISTORY = 100

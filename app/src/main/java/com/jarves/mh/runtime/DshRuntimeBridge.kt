@@ -116,13 +116,10 @@ class DshRuntimeBridge(
                 baseRoute
             }
             writeDshSettings(installed.rootfs, route, provider)
-            val environment = linkedMapOf(
-                "DSH_HOME" to DSH_HOME_GUEST_PATH,
-                // PocketDev already confines the whole Linux guest with PRoot. Let dsh
-                // use every tool inside that boundary without an unavailable approval UI.
-                "DSH_PERMISSION_MODE" to "danger-full-access",
-                route.keyEnv to secret,
-            )
+            val environment = linkedMapOf<String, String>().apply {
+                putAll(dshGuestEnvironment())
+                put(route.keyEnv, secret)
+            }
             if (route.keyEnv != FALLBACK_KEY_ENV) environment.remove(FALLBACK_KEY_ENV)
 
             val guestWorkspacePath = "/workspace/$projectSlug"
@@ -668,6 +665,25 @@ class DshRuntimeBridge(
 }
 
 private data class DshSdkRunResult(val completed: Boolean, val failure: String)
+
+/**
+ * Environment the DSH guest process needs, excluding credentials (the caller adds those).
+ *
+ * `NARB_DISABLE_NATIVE_CACHE` stops `node-addon-native-custom-loader` from materialising
+ * its prebuilt addons into a runtime cache. That materialisation writes a `*.tmp` file and
+ * then hard-links it into place; PRoot emulates the hard link as a symlink, so the cached
+ * entry resolves to a `*.tmp` name. Node cannot infer the `.node` extension from that name
+ * and parses the ELF as JavaScript, which fails as
+ * "No usable native binding found for node-addon-require-builtin-…". Loading the prebuilt
+ * straight from node_modules keeps every backend/ABI validation the loader performs.
+ */
+internal fun dshGuestEnvironment(): Map<String, String> = mapOf(
+    "DSH_HOME" to DshRuntimeBridge.DSH_HOME_GUEST_PATH,
+    // PocketDev already confines the whole Linux guest with PRoot. Let dsh use every tool
+    // inside that boundary without an unavailable approval UI.
+    "DSH_PERMISSION_MODE" to "danger-full-access",
+    "NARB_DISABLE_NATIVE_CACHE" to "1",
+)
 
 /** dsh provider route resolved from our saved provider profile. */
 internal data class DshRoute(

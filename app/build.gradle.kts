@@ -120,6 +120,8 @@ android {
 
     buildTypes {
         debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
             buildConfigField(
                 "String",
                 "TEST_OPENROUTER_API_KEY",

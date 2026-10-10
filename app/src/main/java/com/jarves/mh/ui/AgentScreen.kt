@@ -935,10 +935,21 @@ fun AgentScreen(
                                     lineHeight = 17.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                // The progress card disappears when a failed install clears
+                                // agentInstalling, so the failure has to be repeated here.
+                                state.agentError?.takeIf { it.first == viewedAgent }?.let { (_, message) ->
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        "Install failed: $message",
+                                        fontSize = 12.sp,
+                                        lineHeight = 17.sp,
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                }
                                 Spacer(Modifier.height(12.dp))
                                 Button(
                                     onClick = { onInstallAgent(viewedAgent) },
-                                    enabled = state.agentInstalling == null,
+                                    enabled = state.agentInstalling == null && state.agentUpdating == null,
                                     modifier = Modifier.fillMaxWidth(),
                                     shape = RoundedCornerShape(12.dp),
                                 ) {
@@ -2004,8 +2015,8 @@ private fun AgentUpdateBlock(
 }
 
 private fun formatAgentBytes(bytes: Long): String = when {
-    bytes >= 1_048_576L -> "%.1f MB".format(bytes / 1_048_576.0)
-    bytes >= 1_024L -> "%.1f KB".format(bytes / 1_024.0)
+    bytes >= 1_048_576L -> "%.1f MiB".format(bytes / 1_048_576.0)
+    bytes >= 1_024L -> "%.1f KiB".format(bytes / 1_024.0)
     else -> "$bytes B"
 }
 

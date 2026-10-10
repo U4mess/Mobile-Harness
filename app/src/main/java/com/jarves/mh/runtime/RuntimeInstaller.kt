@@ -15,6 +15,7 @@ import java.util.zip.ZipInputStream
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.coroutineContext
 import com.jarves.mh.model.DevStack
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
@@ -159,7 +160,7 @@ class RuntimeInstaller(private val context: Context) {
                 to = 0.25f,
                 onProgress,
             )
-            onProgress(RuntimeInstallProgress("Verifying and unpacking the Core runtime", 0.28f))
+            onProgress(RuntimeInstallProgress("Unpacking the Core runtime", 0.28f, indeterminate = true))
             val staging = File(runtimeDir, "ubuntu.installing")
             staging.deleteRecursively()
             staging.mkdirs()
@@ -450,6 +451,10 @@ class RuntimeInstaller(private val context: Context) {
         check(latest == expectedVersion) { "A newer DeepSeek Harness release appeared. Check again before updating." }
         val quotedVersion = latest.replace(Regex("[^0-9A-Za-z.+-]"), "")
         check(quotedVersion == latest) { "Invalid DeepSeek Harness version" }
+        val libraryDir = File(rootfs, "usr/local/lib")
+        // Keep the previous install and its markers until the new one has been patched and
+        // verified, so a failure after the swap can still be undone.
+        val markers = captureDshMarkers(dshMarker, dshAndroidCompatibilityMarker)
         runGuestCommand(
             proot = runtime.proot,
             command = "set -e; next=/usr/local/lib/dsh.updating; old=/usr/local/lib/dsh.previous; " +
@@ -457,7 +462,7 @@ class RuntimeInstaller(private val context: Context) {
                 "cd \"${'$'}next\"; npm init -y >/dev/null; " +
                 "npm install --omit=dev --no-audit --no-fund @deepseek-ai/dsh@$quotedVersion; " +
                 "mv /usr/local/lib/dsh \"${'$'}old\"; " +
-                "if mv \"${'$'}next\" /usr/local/lib/dsh; then rm -rf \"${'$'}old\"; " +
+                "if mv \"${'$'}next\" /usr/local/lib/dsh; then exit 0; " +
                 "else mv \"${'$'}old\" /usr/local/lib/dsh; exit 1; fi",
             displayCommand = "npm install @deepseek-ai/dsh@$quotedVersion",
             fraction = 0.55f,
@@ -465,10 +470,29 @@ class RuntimeInstaller(private val context: Context) {
             onProgress = onProgress,
             failureMessage = "DeepSeek Harness update failed; the installed version was preserved",
         )
+        try {
+            dshAndroidCompatibilityMarker.delete()
+            ensureDshAndroidCompatibility()
+            verifyGuest(runtime.proot, "/usr/local/bin/dsh --profile headless --help", "DeepSeek Harness update verification failed")
+        } catch (error: Throwable) {
+            val restored = restorePreviousDshInstall(libraryDir)
+            if (restored) restoreDshMarkers(dshMarker, dshAndroidCompatibilityMarker, markers)
+            throw IllegalStateException(
+                buildString {
+                    append(error.message?.take(300) ?: "DeepSeek Harness update failed")
+                    append(
+                        if (restored) {
+                            " Restored DeepSeek Harness ${markers.version ?: "from the previous installation"}."
+                        } else {
+                            " The previous DeepSeek Harness installation could not be restored automatically."
+                        },
+                    )
+                },
+                error,
+            )
+        }
         dshMarker.writeText(latest)
-        dshAndroidCompatibilityMarker.delete()
-        ensureDshAndroidCompatibility()
-        verifyGuest(runtime.proot, "/usr/local/bin/dsh --profile headless --help", "DeepSeek Harness update verification failed")
+        File(libraryDir, "dsh.previous").deleteRecursively()
     }
 
     private fun fetchAgyManifest(): JSONObject = JSONObject(
@@ -539,7 +563,6 @@ class RuntimeInstaller(private val context: Context) {
             from = fraction,
             to = 0.995f,
             onProgress = onProgress,
-            forceEmbedded = true,
         )
         verifyGuest(proot, "$AGY_GUEST_PATH --version", "Antigravity CLI verification failed")
         agyMarker.writeText(AGY_VERSION)
@@ -582,46 +605,39 @@ class RuntimeInstaller(private val context: Context) {
      */
     fun ensureDshAndroidCompatibility() {
         if (!isAgentInstalled(com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS)) return
-        val persistence = File(
-            rootfs,
-            "usr/local/lib/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js",
-        )
-        val localFs = File(
-            rootfs,
-            "usr/local/lib/dsh/node_modules/@deepseek-ai/dsh-fs-local/lib/index.js",
-        )
-        patchDshHardLinkPublication(
-            file = persistence,
-            importBefore = "import { link, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate } from \"node:fs/promises\";",
-            importAfter = "import { copyFile, link, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate } from \"node:fs/promises\";",
-            callBefore = "await link(tmp, finalPath);",
-            callAfter = "await copyFile(tmp, finalPath, 1);",
-        )
-        patchDshHardLinkPublication(
-            file = localFs,
-            importBefore = "import { chmod, link, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat } from \"node:fs/promises\";",
-            importAfter = "import { chmod, copyFile, link, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat } from \"node:fs/promises\";",
-            callBefore = "await linkFile(tempPath, absolutePath);",
-            callAfter = "await copyFile(tempPath, absolutePath, 1);",
-        )
+        applyDshHardLinkPatches()
         dshAndroidCompatibilityMarker.writeText(DSH_ANDROID_COMPATIBILITY_VERSION)
     }
 
-    private fun patchDshHardLinkPublication(
-        file: File,
-        importBefore: String,
-        importAfter: String,
-        callBefore: String,
-        callAfter: String,
-    ) {
-        check(file.isFile) { "DeepSeek Harness compatibility file is missing: ${file.name}" }
-        var source = file.readText()
-        if (callAfter in source && importAfter in source) return
-        check(callBefore in source && importBefore in source) {
-            "DeepSeek Harness $DSH_VERSION is not compatible with this PocketDev build"
-        }
-        source = source.replace(importBefore, importAfter).replace(callBefore, callAfter)
-        file.writeText(source)
+    /**
+     * Re-applies the Android hard-link patch to an already-installed DSH and verifies the
+     * CLI, without downloading or reinstalling anything. Repairs installs that were
+     * swapped in before the patch could be applied — for example an update that aborted
+     * during its compatibility step, which leaves the version marker newer than the patch.
+     */
+    suspend fun repairDshCompatibilityIfNeeded(): Boolean {
+        if (!isAgentInstalled(com.jarves.mh.model.AgentKind.DEEPSEEK_HARNESS)) return false
+        val markerCurrent = dshAndroidCompatibilityMarker.readTextOrNull() == DSH_ANDROID_COMPATIBILITY_VERSION
+        if (markerCurrent && !dshPatchPending()) return false
+        ensureDshAndroidCompatibility()
+        verifyGuest(
+            proot = installedRuntime().proot,
+            command = "/usr/local/bin/dsh --profile headless --help",
+            failureMessage = "DeepSeek Harness compatibility repair failed",
+        )
+        return true
+    }
+
+    private fun dshPatchPending(): Boolean = DSH_PATCH_TARGETS.any { target ->
+        val file = File(rootfs, target.relativePath)
+        !file.isFile || target.callAfter !in file.readText()
+    }
+
+    private fun applyDshHardLinkPatches() {
+        val packageVersion = readDshPackageVersion(File(rootfs, "usr/local/lib/dsh"))
+            ?: dshMarker.readTextOrNull()
+            ?: "unknown"
+        applyDshHardLinkPatches(rootfs, DSH_PATCH_TARGETS, packageVersion)
     }
 
     /**
@@ -880,12 +896,11 @@ class RuntimeInstaller(private val context: Context) {
         from: Float,
         to: Float,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
-        forceEmbedded: Boolean = false,
     ) {
         // Stack overlays honor the same offline/online flavor as the Core bundle:
         // the offline APK ships every stack bundle inside its assets, while the
         // online APK fetches each one from the release URL on demand.
-        val archive = obtainRuntimeBundle(bundle, preferEmbedded = forceEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES, from, to * 0.8f + from * 0.2f, onProgress)
+        val archive = obtainRuntimeBundle(bundle, preferEmbedded = BuildConfig.OFFLINE_RUNTIME_BUNDLES, from, to * 0.8f + from * 0.2f, onProgress)
         onProgress(RuntimeInstallProgress(message, to * 0.8f + from * 0.2f, indeterminate = true))
         extractZstdTar(archive, rootfs)
         stripMacosMetadataArtifacts(rootfs)
@@ -931,11 +946,19 @@ class RuntimeInstaller(private val context: Context) {
     ): File {
         downloads.mkdirs()
         val destination = File(downloads, bundle.fileName)
-        val useEmbedded = preferEmbedded || BuildConfig.OFFLINE_RUNTIME_BUNDLES
+        val useEmbedded = useEmbeddedRuntimeBundle(BuildConfig.OFFLINE_RUNTIME_BUNDLES, preferEmbedded)
         if (useEmbedded) {
             onProgress(RuntimeInstallProgress("Loading ${bundle.label} bundle", from, 0, bundle.compressedBytes))
             val temporary = File(downloads, "${bundle.fileName}.part")
-            context.assets.open("runtime/${bundle.fileName}").use { input ->
+            // A build can ship without this asset (the bundle is synced in from
+            // dist/runtime-bundles). Say so instead of leaking a raw asset error.
+            val asset = runCatching { context.assets.open("runtime/${bundle.fileName}") }.getOrElse {
+                error(
+                    "This app build does not include the embedded ${bundle.label} package " +
+                        "(${bundle.fileName}). Install a build that bundles it and try again.",
+                )
+            }
+            asset.use { input ->
                 FileOutputStream(temporary).use { output ->
                     val buffer = ByteArray(256 * 1024)
                     var copied = 0L
@@ -950,19 +973,35 @@ class RuntimeInstaller(private val context: Context) {
                     }
                 }
             }
-            require(digest(temporary, "SHA-256").equals(bundle.sha256, ignoreCase = true)) {
-                "${bundle.label} bundle checksum mismatch"
-            }
+            onProgress(RuntimeInstallProgress("Verifying the ${bundle.label} bundle", from, indeterminate = true, event = RuntimeInstallEvent.STAGE))
+            runCatching { verifyChecksumOrFail(temporary, bundle.sha256) }
+                .onFailure { error("${bundle.label} bundle checksum mismatch") }
             if (destination.exists()) destination.delete()
             check(temporary.renameTo(destination)) { "Could not stage the ${bundle.label} bundle" }
             return destination
         }
 
         val url = "${BuildConfig.RUNTIME_RELEASE_BASE_URL}/${bundle.fileName}"
-        downloadVerified(url, destination, bundle.sha256) { downloaded, total ->
-            val ratio = if (total > 0) downloaded.toFloat() / total else 0f
-            onProgress(RuntimeInstallProgress("Downloading ${bundle.label} bundle", from + ratio * (to - from), downloaded, total.takeIf { it > 0 }))
-        }
+        downloadVerified(
+            url = url,
+            destination = destination,
+            expectedChecksum = bundle.sha256,
+            expectedSize = bundle.compressedBytes,
+            onBytes = { downloaded, total ->
+                val ratio = if (total > 0) downloaded.toFloat() / total else 0f
+                onProgress(RuntimeInstallProgress("Downloading ${bundle.label} bundle", from + ratio * (to - from), downloaded, total.takeIf { it > 0 }))
+            },
+            onVerifying = {
+                onProgress(
+                    RuntimeInstallProgress(
+                        message = "Verifying ${bundle.label} bundle",
+                        fraction = to,
+                        indeterminate = true,
+                        event = RuntimeInstallEvent.STAGE,
+                    ),
+                )
+            },
+        )
         return destination
     }
 
@@ -1354,10 +1393,11 @@ class RuntimeInstaller(private val context: Context) {
             environment = emptyMap(),
             guestCommand = listOf("/usr/bin/env", "bash", "-lc", command),
         )
-        withTimeout(60_000L) {
-            while (verify.isAlive) delay(50)
-        }
-        val exit = verify.waitFor()
+        val exit = awaitProcessExit(
+            process = verify,
+            timeoutMs = VERIFY_TIMEOUT_MS,
+            timeoutMessage = "$failureMessage (no response after ${VERIFY_TIMEOUT_MS / 1_000}s)",
+        )
         val output = (verify as? NativeSpawnProcess)?.outputFile
             ?.let(::readProcessOutputSafely)
             .orEmpty()
@@ -1431,6 +1471,17 @@ class RuntimeInstaller(private val context: Context) {
         onProgress(RuntimeInstallProgress("Preparing the Android runtime bridge", 0.42f))
         check(File(rootfs, "usr/local/bin/node").canExecute()) { "Core runtime is missing Node.js" }
         check(File(rootfs, "usr/bin/git").canExecute()) { "Core runtime is missing Git" }
+        // Repair a DSH install whose Android hard-link patch never landed. This must never
+        // block startup: a failure here is reported when the agent is actually used.
+        runCatching { repairDshCompatibilityIfNeeded() }
+            .onSuccess { repaired ->
+                if (repaired) {
+                    onProgress(RuntimeInstallProgress("Repaired the DeepSeek Harness Android patch", 0.9f))
+                }
+            }
+            .onFailure { error ->
+                android.util.Log.w("RuntimeInstaller", "DeepSeek Harness compatibility repair failed", error)
+            }
         onProgress(RuntimeInstallProgress("Private runtime is ready", 1f))
         return installed
     }
@@ -1741,53 +1792,29 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         return file
     }
 
+    /**
+     * Downloads one pinned artifact, retrying transient failures and resuming partial work.
+     * [expectedSize] enables the parallel ranged path for large, size-known bundles; when it
+     * is absent (or the server will not serve consistent ranges) a single connection is used.
+     */
     private suspend fun downloadVerified(
         url: String,
         destination: File,
         expectedChecksum: String,
         algorithm: String = "SHA-256",
+        expectedSize: Long? = null,
+        onVerifying: suspend () -> Unit = {},
         onBytes: suspend (downloaded: Long, total: Long) -> Unit,
     ) {
-        destination.parentFile?.mkdirs()
-        if (destination.isFile && digest(destination, algorithm).equals(expectedChecksum, ignoreCase = true)) {
-            onBytes(destination.length(), destination.length())
-            return
-        }
-        val temporary = File(destination.parentFile, "${destination.name}.part")
-        var existing = temporary.takeIf(File::isFile)?.length() ?: 0L
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.connectTimeout = 20_000
-        connection.readTimeout = 120_000
-        connection.instanceFollowRedirects = true
-        if (existing > 0L) connection.setRequestProperty("Range", "bytes=$existing-")
-        check(connection.responseCode in 200..299) { "Download failed with HTTP ${connection.responseCode}" }
-        val resumed = connection.responseCode == HttpURLConnection.HTTP_PARTIAL && existing > 0L
-        if (!resumed) {
-            temporary.delete()
-            existing = 0L
-        }
-        val total = connection.contentLengthLong.takeIf { it >= 0L }?.plus(existing) ?: -1L
-        connection.inputStream.use { input ->
-            FileOutputStream(temporary, resumed).use { output ->
-                val buffer = ByteArray(128 * 1024)
-                var downloaded = existing
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    output.write(buffer, 0, count)
-                    downloaded += count
-                    onBytes(downloaded, total)
-                }
-            }
-        }
-        connection.disconnect()
-        val actual = digest(temporary, algorithm)
-        if (!actual.equals(expectedChecksum, ignoreCase = true)) {
-            temporary.delete()
-            error("Downloaded file checksum did not match")
-        }
-        destination.delete()
-        check(temporary.renameTo(destination)) { "Could not finish download" }
+        RuntimeDownloader().download(
+            url = url,
+            destination = destination,
+            expectedChecksum = expectedChecksum,
+            algorithm = algorithm,
+            expectedSize = expectedSize,
+            onVerifying = onVerifying,
+            onProgress = onBytes,
+        )
     }
 
     private fun fetchText(url: String): String {
@@ -1797,19 +1824,6 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         connection.setRequestProperty("Accept", "application/json")
         check(connection.responseCode in 200..299) { "Request failed with HTTP ${connection.responseCode}" }
         return connection.inputStream.bufferedReader().use { it.readText() }.also { connection.disconnect() }
-    }
-
-    private fun digest(file: File, algorithm: String): String {
-        val digest = MessageDigest.getInstance(algorithm)
-        file.inputStream().use { input ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                digest.update(buffer, 0, count)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun File.readTextOrNull(): String? = runCatching { readText().trim() }.getOrNull()
@@ -1890,6 +1904,65 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         private const val MAX_TERMINAL_LINE = 500
         private const val MAX_COLLECTED_OUTPUT = 24_000
         private const val MAX_PROCESS_OUTPUT_BYTES = 256 * 1024
+        private const val VERIFY_TIMEOUT_MS = 60_000L
         private val ANSI_ESCAPE = Regex("\\u001B(?:\\[[0-?]*[ -/]*[@-~]|\\][^\\u0007]*(?:\\u0007|\\u001B\\\\))")
+    }
+}
+
+/**
+ * Waits for [process] to exit within [timeoutMs] and never leaves it running.
+ *
+ * `NativeSpawn.waitFor` maps its `no_hang` boolean straight onto `waitpid` flags
+ * (`no_hang ? WNOHANG : 0`), so `Process.isAlive` is a non-blocking `WNOHANG` poll
+ * and the polling loop stays cancellable. The final `waitFor()` therefore only
+ * runs once the process has already been reaped.
+ *
+ * The process is destroyed on timeout, on failure and on coroutine cancellation,
+ * so a stuck guest command can never hold the runtime open behind the UI.
+ */
+internal suspend fun awaitProcessExit(process: Process, timeoutMs: Long, timeoutMessage: String): Int =
+    try {
+        withTimeoutOrNull(timeoutMs) {
+            while (process.isAlive) delay(50)
+            process.waitFor()
+        } ?: error(timeoutMessage)
+    } finally {
+        if (process.isAlive) process.destroy()
+    }
+
+/**
+ * Decides whether a runtime bundle is read from the APK assets instead of the
+ * release URL.
+ *
+ * The offline edition ships every bundle it needs, so it must never fall back to
+ * the network; the online edition has no embedded bundles and always downloads.
+ * Taking the flavor as a parameter keeps that rule verifiable in unit tests,
+ * where `BuildConfig.OFFLINE_RUNTIME_BUNDLES` is a fixed compile-time constant.
+ */
+internal fun useEmbeddedRuntimeBundle(offlineRuntimeBundles: Boolean, preferEmbedded: Boolean = false): Boolean =
+    preferEmbedded || offlineRuntimeBundles
+
+/** SHA-[algorithm] digest of [file] as lowercase hex. */
+internal fun digest(file: File, algorithm: String): String {
+    val digest = MessageDigest.getInstance(algorithm)
+    file.inputStream().use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            digest.update(buffer, 0, count)
+        }
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
+}
+
+/**
+ * Fails when [file] does not match [expectedChecksum], deleting it first so a
+ * corrupt or tampered download can never be promoted to a runtime bundle.
+ */
+internal fun verifyChecksumOrFail(file: File, expectedChecksum: String, algorithm: String = "SHA-256") {
+    if (!digest(file, algorithm).equals(expectedChecksum, ignoreCase = true)) {
+        file.delete()
+        error("Downloaded file checksum did not match")
     }
 }

@@ -244,6 +244,15 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val projectsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+    var showBuildOutputs by rememberSaveable(state.activeProject?.id) { mutableStateOf(false) }
+    if (showBuildOutputs && state.activeProject != null && state.workspaceVisible) {
+        BuildOutputsDialog(
+            root = viewModel.buildOutputsRoot(),
+            busy = state.isRunning || state.projectTerminalRunning || state.androidBuildRunning,
+            onDismiss = { showBuildOutputs = false },
+        )
+    }
+
     LaunchedEffect(state.toastMessage) {
         state.toastMessage?.let { message ->
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
@@ -355,6 +364,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onRemoveAttachment = viewModel::removePendingAttachment,
             onOpenAttachment = viewModel::openChatAttachment,
             onBuildAndRunAndroid = viewModel::buildAndRunAndroidApp,
+            onBuildOutputs = { showBuildOutputs = true },
         )
         else -> RootScreenHost(state, viewModel, projectsListState)
     }
@@ -1565,7 +1575,15 @@ private fun RuntimeInstallationScreen(
                         Spacer(Modifier.weight(1f))
                         state.startupBytes?.let { (downloaded, total) ->
                             Text(
-                                "${formatMegabytes(downloaded)} / ${formatMegabytes(total)}",
+                                buildString {
+                                    append("${formatMegabytes(downloaded)} / ${formatMegabytes(total)}")
+                                    state.startupBytesPerSecond?.takeIf { it > 0L }?.let { speed ->
+                                        append(" · ${formatMiBPerSecond(speed)}")
+                                    }
+                                    state.startupEtaSeconds?.let { remaining ->
+                                        append(" · ~${formatEta(remaining)} left")
+                                    }
+                                },
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 11.5.sp,
                             )
@@ -2019,7 +2037,19 @@ private fun StartupErrorScreen(
     }
 }
 
-private fun formatMegabytes(bytes: Long): String = "%.1f MB".format(bytes / 1_048_576.0)
+private fun formatMegabytes(bytes: Long): String = "%.1f MiB".format(bytes / 1_048_576.0)
+
+/** Download throughput. Bytes are base-2, so the label is MiB/s rather than MB/s. */
+private fun formatMiBPerSecond(bytesPerSecond: Long): String =
+    "%.1f MiB/s".format(bytesPerSecond / 1_048_576.0)
+
+/** Download-only ETA. Extraction is deliberately not extrapolated from this. */
+private fun formatEta(seconds: Long): String = when {
+    seconds <= 1L -> "1s"
+    seconds < 60L -> "${seconds}s"
+    seconds < 3_600L -> "${(seconds + 30L) / 60L} min"
+    else -> "${seconds / 3_600L}h ${(seconds % 3_600L) / 60L}m"
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -3838,6 +3868,7 @@ private fun WorkspaceScreen(
     onRemoveAttachment: (String) -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onBuildAndRunAndroid: () -> Unit,
+    onBuildOutputs: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
@@ -4073,6 +4104,7 @@ private fun WorkspaceScreen(
                     onRefresh = onRefreshFiles,
                     onOpenFile = onOpenFile,
                     onUseSuggestedProjectRoot = onUseSuggestedProjectRoot,
+                    onBuildOutputs = onBuildOutputs,
                     onExport = {
                         exportProjectLauncher.launch("${state.activeProject?.slug ?: "project"}.zip")
                     },
@@ -4284,6 +4316,7 @@ private fun FilesTab(
     onOpenFile: (WorkspaceEntry) -> Unit,
     onUseSuggestedProjectRoot: () -> Unit,
     onExport: () -> Unit,
+    onBuildOutputs: () -> Unit,
 ) {
     var expandedDirectories by rememberSaveable { mutableStateOf(emptyList<String>()) }
     LaunchedEffect(files.map { it.path }) {
@@ -4338,6 +4371,12 @@ private fun FilesTab(
                         IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "Refresh files") }
                     }
                 }
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onBuildOutputs, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Android, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Build outputs / Save APK")
             }
             Spacer(Modifier.height(12.dp))
         }

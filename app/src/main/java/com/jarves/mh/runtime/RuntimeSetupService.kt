@@ -31,6 +31,40 @@ import org.json.JSONObject
 
 enum class RuntimeSetupStatus { IDLE, RUNNING, COMPLETE, ERROR, CANCELLED }
 
+/**
+ * Keeps routine progress writes off the download loop while never losing a milestone.
+ *
+ * Every 128 KiB chunk used to rewrite the whole state file, which is harmless at a single
+ * connection's throughput but becomes the ceiling once downloads run in parallel. Stage
+ * changes and completions bypass the interval so a crash still leaves an accurate state.
+ */
+internal class PersistThrottle(private val intervalMs: Long) {
+    private var lastPersistedAt: Long? = null
+
+    fun shouldPersist(now: Long, immediate: Boolean): Boolean {
+        if (immediate) {
+            lastPersistedAt = now
+            return true
+        }
+        val previous = lastPersistedAt
+        if (previous != null && now - previous < intervalMs) return false
+        lastPersistedAt = now
+        return true
+    }
+}
+
+/** Stage changes and terminal events are milestones; routine output is not. */
+internal fun persistsImmediately(event: RuntimeInstallEvent): Boolean = when (event) {
+    RuntimeInstallEvent.STAGE,
+    RuntimeInstallEvent.COMMAND_COMPLETED,
+    RuntimeInstallEvent.COMPLETED,
+    -> true
+    RuntimeInstallEvent.COMMAND,
+    RuntimeInstallEvent.OUTPUT,
+    RuntimeInstallEvent.DOWNLOAD,
+    -> false
+}
+
 data class RuntimeSetupSnapshot(
     val status: RuntimeSetupStatus = RuntimeSetupStatus.IDLE,
     val message: String = "Preparing your private coding workspace",
@@ -41,11 +75,19 @@ data class RuntimeSetupSnapshot(
     val logs: List<String> = emptyList(),
     val errorMessage: String? = null,
     val offline: Boolean = false,
+    /** Measured download throughput; null outside a transfer (verifying, extracting, idle). */
+    val bytesPerSecond: Long? = null,
+    /** Download-only estimate. Extraction is not extrapolated from download throughput. */
+    val etaSeconds: Long? = null,
 )
 
 object RuntimeSetupController {
     private val mutableSnapshot = MutableStateFlow(RuntimeSetupSnapshot())
     val snapshot: StateFlow<RuntimeSetupSnapshot> = mutableSnapshot.asStateFlow()
+    private val throttle = PersistThrottle(PERSIST_INTERVAL_MS)
+    private var sampleBytes = 0L
+    private var sampleAt = 0L
+    private var measuredBytesPerSecond: Long? = null
 
     @Synchronized
     fun restore(context: Context) {
@@ -74,7 +116,7 @@ object RuntimeSetupController {
     fun begin(context: Context) {
         val previous = mutableSnapshot.value.logs
         val logs = (previous + "— Resuming Mobile Harness setup —").takeLast(MAX_LOG_LINES)
-        set(context, RuntimeSetupSnapshot(status = RuntimeSetupStatus.RUNNING, progress = 0.01f, logs = logs))
+        set(context, RuntimeSetupSnapshot(status = RuntimeSetupStatus.RUNNING, progress = 0.01f, logs = logs), immediate = true)
     }
 
     @Synchronized
@@ -88,6 +130,31 @@ object RuntimeSetupController {
         }
         val sanitizedLine = line?.takeIf(String::isNotBlank)?.let(::sanitize)
         val isDownloadUpdate = event.downloadedBytes != null && event.totalBytes != null
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (isDownloadUpdate) {
+            val downloaded = event.downloadedBytes ?: 0L
+            val elapsed = now - sampleAt
+            when {
+                sampleAt == 0L -> {
+                    sampleAt = now
+                    sampleBytes = downloaded
+                }
+                elapsed >= SPEED_SAMPLE_MS -> {
+                    measuredBytesPerSecond = ((downloaded - sampleBytes).coerceAtLeast(0L) * 1_000L) / elapsed
+                    sampleBytes = downloaded
+                    sampleAt = now
+                }
+            }
+        } else if (persistsImmediately(event.event)) {
+            // A stage change ends the transfer; its throughput no longer describes anything.
+            measuredBytesPerSecond = null
+            sampleAt = 0L
+            sampleBytes = 0L
+        }
+        val total = event.totalBytes
+        val downloaded = event.downloadedBytes
+        val etaSeconds = measuredBytesPerSecond?.takeIf { it > 0L }
+            ?.let { speed -> total?.takeIf { it > 0L }?.let { size -> downloaded?.let { (size - it).coerceAtLeast(0L) / speed } } }
         val logs = when {
             sanitizedLine == null -> current.logs
             isDownloadUpdate && current.logs.lastOrNull()?.startsWith(DOWNLOAD_PREFIX) == true ->
@@ -116,7 +183,10 @@ object RuntimeSetupController {
                 logs = logs,
                 errorMessage = null,
                 offline = false,
+                bytesPerSecond = measuredBytesPerSecond,
+                etaSeconds = etaSeconds,
             ),
+            immediate = persistsImmediately(event.event),
         )
     }
 
@@ -134,6 +204,7 @@ object RuntimeSetupController {
                 totalBytes = null,
                 logs = (current.logs + "✓ Setup completed successfully").takeLast(MAX_LOG_LINES),
             ),
+            immediate = true,
         )
     }
 
@@ -166,6 +237,7 @@ object RuntimeSetupController {
                 indeterminate = false,
                 logs = (current.logs + "✕ $friendly").takeLast(MAX_LOG_LINES),
             ),
+            immediate = true,
         )
     }
 
@@ -180,14 +252,17 @@ object RuntimeSetupController {
                 indeterminate = false,
                 logs = (current.logs + "• Setup paused safely").takeLast(MAX_LOG_LINES),
             ),
+            immediate = true,
         )
     }
 
     fun fullLog(context: Context): String = logFile(context).readTailText(MAX_LOG_BYTES.toInt())
 
-    private fun set(context: Context, value: RuntimeSetupSnapshot) {
+    private fun set(context: Context, value: RuntimeSetupSnapshot, immediate: Boolean = false) {
         mutableSnapshot.value = value
-        persist(context, value)
+        if (throttle.shouldPersist(android.os.SystemClock.elapsedRealtime(), immediate)) {
+            persist(context, value)
+        }
     }
 
     private fun persist(context: Context, value: RuntimeSetupSnapshot) {
@@ -228,6 +303,12 @@ object RuntimeSetupController {
     private const val MAX_LOG_BYTES = 1_000_000L
     private const val MB = 1_048_576.0
     private const val DOWNLOAD_PREFIX = "Downloading:"
+
+    /** Routine progress is persisted at most this often; milestones bypass it entirely. */
+    private const val PERSIST_INTERVAL_MS = 1_000L
+
+    /** Throughput is averaged over at least this window so the figure is not a burst. */
+    private const val SPEED_SAMPLE_MS = 500L
 }
 
 class RuntimeSetupService : Service() {
