@@ -48,6 +48,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jarves.mh.ui.theme.PocketOrange
+import com.jarves.mh.ui.theme.PocketTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -263,8 +264,10 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
 
 @Composable
 private fun formatInlineMarkdown(text: String): AnnotatedString {
-    val codeBg = MaterialTheme.colorScheme.surfaceVariant
-    val codeColor = PocketOrange
+    // Semantic code roles so inline code reads as code in both themes, rather than as a
+    // brand accent. Applies to every inline code span, not just workspace paths.
+    val codeBg = PocketTheme.colors.codeSurface
+    val codeColor = PocketTheme.colors.codeText
     val primaryColor = MaterialTheme.colorScheme.primary
 
     return remember(text, codeBg, codeColor, primaryColor) {
